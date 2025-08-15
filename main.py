@@ -17,6 +17,8 @@ class Config():
     attn_dropout: float = 0.2
     resid_dropout: float = 0.2
 
+
+
 cfg = Config()
 
 train_loader, val_loader = load_tiny_stories(cfg)
@@ -33,9 +35,11 @@ class AttentionBlock(nn.Module):
         self.n_embed = cfg.n_embed
         self.resid_dropout = nn.Dropout(cfg.resid_dropout)
         self.attn_dropout = cfg.attn_dropout
+        self.ln = nn.LayerNorm(cfg.n_embed)
 
     def forward(self, x):
         B, T, E = x.shape
+        x = self.ln(x)
 
         # x (BTE) ; W.T (E, 3E)
         # x @ W.T -> (B, T, 3E)
@@ -53,17 +57,6 @@ class AttentionBlock(nn.Module):
         return self.resid_dropout(self.out_projection(y))
 
 
-
-def flash_attention_test(cfg):
-    test_cases = [
-        (2,10,cfg.n_embed),
-        (1,1,cfg.n_embed),
-        (500,500,cfg.n_embed)
-    ]
-    for batch, seq, embed in test_cases:
-        x = torch.randn(batch, seq, embed)
-        attention_block = AttentionBlock(cfg)
-        out = attention_block.forward(x)
-        assert x.shape == out.shape, "Output shape should match input"
-
-flash_attention_test(cfg)
+class MLPBlock(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()

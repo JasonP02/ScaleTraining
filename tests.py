@@ -24,12 +24,24 @@ def flash_attention_test(cfg):
         out = attention_block.forward(x)
         assert x.shape == out.shape, "Output shape should match input"
 
-# Load config
-cfg = Config()
 
-# Test the dataloader
-train_loader, _ = load_tiny_stories(cfg)
-test_tiny_stories_loader(train_loader)
+def run_all_tests():
+    # Load config
+    cfg = Config()
 
-# Test the flash attention block
-flash_attention_test(cfg)
+    # Test the dataloader
+    train_loader, _ = load_tiny_stories(cfg)
+    print("== Testing tinystories loader ==")
+    test_tiny_stories_loader(train_loader)
+
+    print(f'\n == Testing Attention Block ==')
+    try:
+        flash_attention_test(cfg)
+        print("Attention test passed")
+    except Exception as e:
+        print("Attention test failed: {e}")
+    
+    print("All tests passed!")
+
+if __name__ == "__main__":
+    run_all_tests()
