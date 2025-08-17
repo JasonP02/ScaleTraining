@@ -1,9 +1,9 @@
 # TODO
 
 ## Phase 1: Small transformer
-- [ ]Load tiny-stories dataset
-- [ ]Configure a basic encoder only transformer (d_model: 512, nlayers: 3, nhead: 4, d_hidden: 512*4)
-- [ ]Apply RoPE embeddings
+- [x]Load tiny-stories dataset
+- [x]Configure a basic decoder only transformer (d_model: 512, nlayers: 3, nhead: 4, d_hidden: 512*4)
+- [x]Apply RoPE embeddings
 - [ ]Choose a pretrained tokenizer.
 - [ ]Train tokenizer (optional).
 - [ ]Set up training loop (muon or similar)

@@ -11,11 +11,3 @@ def load_tiny_stories(cfg):
     train_loader = DataLoader(tsplit, batch_size=cfg.batch_size, shuffle=True)
     val_loader = DataLoader(vsplit, batch_size=cfg.batch_size, shuffle=True)
     return train_loader, val_loader
-
-# Test passed: the dataset properly loads a text sample (print inspection)
-def test_tiny_stories_loader(loader):
-    for i, batch in enumerate(loader):
-        print(f"Batch {i}")
-        print(f"Sample: \n {batch['text'][0]}")
-        if i>3:
-            break

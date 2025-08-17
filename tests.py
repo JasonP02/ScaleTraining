@@ -12,7 +12,7 @@ def test_tiny_stories_loader(loader):
         if i>3:
             break
 
-def flash_attention_test(cfg):
+def rope_and_flash_attention_test(cfg):
     test_cases = [
         (2,10,cfg.n_embed),
         (1,1,cfg.n_embed),
@@ -20,10 +20,11 @@ def flash_attention_test(cfg):
     ]
     for batch, seq, embed in test_cases:
         x = torch.randn(batch, seq, embed)
+
+        print(f"x input shape {x.shape}")
         attention_block = AttentionBlock(cfg)
         out = attention_block.forward(x)
         assert x.shape == out.shape, "Output shape should match input"
-
 
 def run_all_tests():
     # Load config
@@ -36,10 +37,10 @@ def run_all_tests():
 
     print(f'\n == Testing Attention Block ==')
     try:
-        flash_attention_test(cfg)
+        rope_and_flash_attention_test(cfg)
         print("Attention test passed")
     except Exception as e:
-        print("Attention test failed: {e}")
+        print(f"Attention test failed: {e}")
     
     print("All tests passed!")
 
