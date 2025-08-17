@@ -5,25 +5,7 @@ import torch
 
 from dataload import load_tiny_stories
 from dataclasses import dataclass
-
-
-@dataclass
-class Config():
-    device = 'cuda' if torch.cuda.is_available else 'cpu'
-    batch_size: int = 256
-    vocab_size: int = 16000
-    n_layer: int = 1
-    max_seq_len: int = 1000
-
-    n_head: int = 4
-    n_embed: int = 256
-    bias: bool = True
-    attn_dropout: float = 0.2
-    resid_dropout: float = 0.2
-
-    n_hidden: int = 256*4
-
-cfg = Config()
+from torch.utils.data import DataLoader
 
 
 # Flash attention block
@@ -155,8 +137,6 @@ class TransformerNetwork(nn.Module):
         ])
         self.ln = nn.LayerNorm(cfg.n_embed)
 
-        
-        
     def forward(self, x):
         B,T = x.shape
         x = self.token_embedding(x)
@@ -167,3 +147,66 @@ class TransformerNetwork(nn.Module):
         x = self.ln(x)
         x = self.W_ue(x)
         return x
+
+class AdaMuon(torch.optim.Optimizer):
+    def __init__(self):
+        self.AS_iters = 5
+        self.momentum_prev = 
+
+    def do_adam_shulz(self):
+        X_o = 
+        a = 3.4445
+        b = -4.7750
+        c = 2.0315
+
+        for i in range(self.AS_iters):
+
+
+admuon = AdaMuon()
+admuon.do_adam_shulz()
+
+@dataclass
+class Config():
+    device = 'cuda' if torch.cuda.is_available else 'cpu'
+    batch_size: int = 256
+    vocab_size: int = 16000
+    n_layer: int = 1
+    max_seq_len: int = 1000
+
+    n_head: int = 4
+    n_embed: int = 256
+    bias: bool = True
+    attn_dropout: float = 0.2
+    resid_dropout: float = 0.2
+
+    n_hidden: int = 256*4
+
+cfg = Config()
+
+
+class LLMTrainer:
+    def __init__(self,
+                 cfg,
+                 model: nn.Module,
+                 train_loader: DataLoader,
+                 val_loader: DataLoader):
+        
+        self.max_train_tokens: int = cfg.max_train_tokens
+        self.used_train_tokens: int = 0
+
+        self.max_val_tokens: int = cfg.max_val_tokens
+        self.used_val_tokens: int = 0
+        self.model: nn.Module = model
+
+        self.train_loader = train_loader
+        self.val_loader = val_loader 
+
+        # self.optimizer = 
+
+    def train(self):
+        while self.used_train_tokens < self.max_train_tokens and batch_is_finished:
+            batch_is_finished = False
+            for batch, idx in range(1):
+                pass
+
+            batch_is_finished = True
