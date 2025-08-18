@@ -149,21 +149,62 @@ class TransformerNetwork(nn.Module):
         return x
 
 class AdaMuon(torch.optim.Optimizer):
-    def __init__(self):
-        self.AS_iters = 5
-        self.momentum_prev = 
+    def __init__(self, params, lr, cfg):
+        if lr < 0.0: raise ValueError(f"Invalid lr: {lr}")
+        defaults = dict(lr=lr)
+        super(AdaMuon, self).__init__(params, defaults)
 
-    def do_adam_shulz(self):
-        X_o = 
+        for group in self.param_groups:
+            for param in group['params']:
+                self.state[param]['step'] = 0 # Initalize step
+                self.state[param]['momentum'] = torch.zeros_like(param) # Momentum is initially zero
+
+        
+        self.AS_iters = 5 # Number of newton-shulz iterations. 5 is an emperical value
+        self.momentum_coef = cfg.momentum_coef
+
+    def step(self, closure=None):
+        loss = None
+
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for group in self.param_groups:
+            for param in group['params']:
+                if param.grad is None:
+                    continue
+                    
+                grad = param.grad
+                if grad.dtype in {torch.float16, torch.bfloat16}:
+                    grad = grad.float()
+
+                self.state[param]['momentum'] = self.momentum_coef * self.state[param]['momentum'] + grad
+
+                NS = self._newton_shulz(self.state[param]['momentum']) # Apply N-S for 5 iterations for weight update
+                update = group['lr'] * (0.2 * NS * torch.sqrt(torch.max(NS.shape)) + group['weight_decay']*param)
+                param.sub_(update)   
+
+                self.state[param]['step'] += 1
+
+        return loss
+
+
+    def _newton_shulz(self, momentum):
+        X_prev = momentum / (momentum.norm() + 1e-8)
         a = 3.4445
         b = -4.7750
         c = 2.0315
+        
 
         for i in range(self.AS_iters):
+            X_prev = a * X_prev + b * (X_prev @ X_prev.T) @ X_prev + c * (X_prev @ X_prev.T)**2 @ X_prev
+
+        return X_prev
+             
 
 
-admuon = AdaMuon()
-admuon.do_adam_shulz()
+
 
 @dataclass
 class Config():
@@ -180,9 +221,23 @@ class Config():
     resid_dropout: float = 0.2
 
     n_hidden: int = 256*4
+    momentum_coef: float = 0.99
 
 cfg = Config()
+lr = cfg.lr
 
+model = TransformerNetwork(cfg)
+
+matrix_params = []
+other_params = []
+
+for name, p in model.named_parameters():
+    if p.ndim == 2:     # example predicate
+        matrix_params.append(p)
+    else:
+        other_params.append(p)
+
+admuon = AdaMuon(params=matrix_params, lr=lr, cfg=cfg)
 
 class LLMTrainer:
     def __init__(self,
