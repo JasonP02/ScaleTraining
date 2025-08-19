@@ -148,20 +148,27 @@ class TransformerNetwork(nn.Module):
         x = self.W_ue(x)
         return x
 
-class AdaMuon(torch.optim.Optimizer):
-    def __init__(self, params, lr, cfg):
+
+
+class _BaseOptimizer(torch.optim.Optimizer):
+    def __init__(self, params, lr, beta: float = 0.9, beta2: float = 0.999,
+                 weight_decay: float = 0.0, ns_iters: int = 5, eps: float = 1e-8):
+
         if lr < 0.0: raise ValueError(f"Invalid lr: {lr}")
         defaults = dict(lr=lr)
-        super(AdaMuon, self).__init__(params, defaults)
+        super().__init__(params, dict(lr=lr, weight_decay=weight_decay))
 
         for group in self.param_groups:
             for param in group['params']:
                 self.state[param]['step'] = 0 # Initalize step
-                self.state[param]['momentum'] = torch.zeros_like(param) # Momentum is initially zero
+                self.state[param]['momentum'] = torch.zeros_like(param, dtype=torch.flaot32, device=param.device) # Momentum is initially zero
 
         
-        self.AS_iters = 5 # Number of newton-shulz iterations. 5 is an emperical value
-        self.momentum_coef = cfg.momentum_coef
+        self.NS_iters = ns_iters # Number of newton-shulz iterations. 5 is an emperical value
+        self.momentum_coef = momentum_coef
+
+    def update_momentum(self, grad, momentum):
+        pass
 
     def step(self, closure=None):
         loss = None
@@ -174,37 +181,59 @@ class AdaMuon(torch.optim.Optimizer):
             for param in group['params']:
                 if param.grad is None:
                     continue
+                # For ease of reading
+                weight_decay = group['weight_decay']
+                lr = group['lr']
                     
                 grad = param.grad
                 if grad.dtype in {torch.float16, torch.bfloat16}:
                     grad = grad.float()
 
-                self.state[param]['momentum'] = self.momentum_coef * self.state[param]['momentum'] + grad
+                self.state[param]['momentum'] = self.update_momentum(grad, self.state[param]['momentum'])
 
                 NS = self._newton_shulz(self.state[param]['momentum']) # Apply N-S for 5 iterations for weight update
-                update = group['lr'] * (0.2 * NS * torch.sqrt(torch.max(NS.shape)) + group['weight_decay']*param)
-                param.sub_(update)   
+                
+                update = lr * (0.2 * NS * torch.sqrt(torch.max(NS.shape)) + weight_decay * param) # Update per muon
+                param.sub_(update) # Update the weights by subtracting the gradient + muon params 
 
-                self.state[param]['step'] += 1
+                self.state[param]['step'] += 1 # Update the step
 
         return loss
 
 
-    def _newton_shulz(self, momentum):
-        X_prev = momentum / (momentum.norm() + 1e-8)
-        a = 3.4445
-        b = -4.7750
-        c = 2.0315
-        
+    def _newton_shulz(self, momentum, steps=5, eps=1e-8) -> torch.Tensor:
+        """
+        Newton Shulz iteration for creating orthogonal matrix; default 5 steps
+        params:
+            momentum: the momentum matrix of size 2
+            steps: number of convergence steps
+            eps: epsilon value for non-zero division
+        outputs:
+            X: approximate orthogonalized matrix of the momentum for muon loss function
+        """
+        assert momentum.ndim == 2, f"Input momentum matrix size (and the weight matrix) is not 2"
+        X = momentum.bfloat16()
+        a,b,c = (3.4445, -4.7750, 2.0315)
+        X /= (X.norm() + eps)
+        if momentum.size(0) > momentum.size(1):
+            X = X.T
+        for _ in range(steps):
+            A = X @ X.T
+            B = b * A + (c * A @ A)
+            X = a * X + B @ X
+        if momentum.size(0) > momentum.size(1):
+            X = X.T
+        assert X.shape == momentum.shape, f"Output shape {X.shape} does nto match the input momentum shape {momentum.shape}"
+        return X
 
-        for i in range(self.AS_iters):
-            X_prev = a * X_prev + b * (X_prev @ X_prev.T) @ X_prev + c * (X_prev @ X_prev.T)**2 @ X_prev
+class Muon(_BaseOptimizer):
+    def __init__(self, params, lr, beta: float = 0.9, beta2: float = 0.999,
+                 weight_decay: float = 0.0, ns_iters: int = 5, eps: float = 1e-8):
+        super().__init__(params, lr, beta, beta2, weight_decay, ns_iters, eps)
 
-        return X_prev
-             
-
-
-
+    def update_momentum(self, grad, momentum):
+        momentum.mul_(self.momentum_coef, momentum).add_(grad) # inplace operation for memory efficency
+        return momentum
 
 @dataclass
 class Config():
