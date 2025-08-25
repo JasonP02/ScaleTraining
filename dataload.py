@@ -1,14 +1,32 @@
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from dataclasses import dataclass
+from transformers import AutoTokenizer, GPT2Tokenizer
+import torch
 
 # Loading tinystories
-def load_tiny_stories(cfg):
-    tsplit = load_dataset("roneneldan/TinyStories", split="train")
-    vsplit = load_dataset("roneneldan/TinyStories", split="validation")
-    # Remove torch format for text column as it's unsupported
-    tsplit = tsplit.with_format(None)
-    vsplit = vsplit.with_format(None)
-    train_loader = DataLoader(tsplit, batch_size=cfg.batch_size, shuffle=True)
-    val_loader = DataLoader(vsplit, batch_size=cfg.batch_size, shuffle=False)
+def load_tokenized_dataset(cfg):
+    train_loader = DataLoader(torch.load(f'datasets/train.pt'), batch_size=cfg.batch_size, shuffle=True)
+    val_loader = DataLoader(torch.load(f'datasets/val.pt'), batch_size=cfg.batch_size, shuffle=False)
     return train_loader, val_loader
+
+
+def tokenize_dataset(split_name, dataset_name, tokenizer, save_path, tok_type='hf'):
+    dataset = load_dataset(dataset_name, split_name) # Load data
+    if tok_type == 'hf':
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer)
+    elif tok_type == 'gpt2':
+        tokenizer = GPT2Tokenizer.from_pretrained(tokenizer)
+    else:
+        raise ValueError(f"Tokenizer type {tok_type} not supported")
+ 
+    def tokenize_function(examples):
+        return tokenizer(examples['text'], padding='max_length', truncation=True)
+    
+    tokenized_dataset = dataset.map(tokenize_function, remove_columns=['text'], batched=True)
+    tokenized_dataset.save_to_disk(f'{save_path}/{split_name}.pt')
+
+    return tokenized_dataset
+
+
+
