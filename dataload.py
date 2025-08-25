@@ -3,11 +3,12 @@ from torch.utils.data import DataLoader
 from dataclasses import dataclass
 from transformers import AutoTokenizer, GPT2Tokenizer
 import torch
+from config import cfg
 
 # Loading tinystories
 def load_tokenized_dataset(cfg):
-    train_loader = DataLoader(torch.load(f'datasets/train.pt'), batch_size=cfg.batch_size, shuffle=True)
-    val_loader = DataLoader(torch.load(f'datasets/val.pt'), batch_size=cfg.batch_size, shuffle=False)
+    train_loader = DataLoader(torch.load(f'{cfg.data_path}/train.pt'), batch_size=cfg.batch_size, shuffle=True)
+    val_loader = DataLoader(torch.load(f'{cfg.data_path}/val.pt'), batch_size=cfg.batch_size, shuffle=False)
     return train_loader, val_loader
 
 
@@ -28,5 +29,11 @@ def tokenize_dataset(split_name, dataset_name, tokenizer, save_path, tok_type='h
 
     return tokenized_dataset
 
+if __name__ == '__main__':
+    tokenize_dataset('train', 'roneneldan/TinyStories', 'gpt2', 'datasets', 'gpt2')
+    tokenize_dataset('validation', 'roneneldan/TinyStories', 'gpt2', 'datasets', 'gpt2')
+    train_loader, val_loader = load_tokenized_dataset(cfg)
+    print(train_loader[0])
+    print(val_loader[0])
 
 
