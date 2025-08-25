@@ -1,5 +1,5 @@
 Working on:
-Fixing rope
+Adding docstrings, cleaning up code
 
 Next task:
-Docs etc
+Finalize training script, add visualisations, do small training run to verify optimizer efficacy.
