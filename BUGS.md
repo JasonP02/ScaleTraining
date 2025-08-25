@@ -21,18 +21,3 @@ Quality and consistency improvements
 13) Minor nits
 - [AttentionBlock.forward()](model.py:73) uses self.attn_dropout as a float for SDPA. That's valid; if you prefer symmetry with residual dropout, you could also keep a nn.Dropout layer for attention outputs, but it's optional.
 - [dataload.py](dataload.py) imports dataclass but does not use it.
-
-Suggested minimal patches (no behavioral changes beyond fixes)
-
-- tests import fix:
-  - At [tests.py](tests.py:1), import [AttentionBlock.__init__()](model.py:7) from model, and [Config](main.py:15) from main.
-- Dataloader fixes:
-  - Remove both set_format calls in [load_tiny_stories()](dataload.py:6-12).
-  - Set val DataLoader shuffle to False at [dataload.py](dataload.py:12).
-- RoPE buffers/device:
-  - In [create_rope_lookup()](model.py:25), register cos/sin as non-persistent buffers.
-  - In [_apply_rope()](model.py:39), add .to(q.device, dtype=q.dtype) and unsqueeze for broadcasting.
-- Remove unused optimizer block:
-  - Delete [main.py](main.py:47-57).
-- Test harness truthfulness:
-  - In [run_all_tests()](tests.py:29-47), gate the final success message on a flag.
