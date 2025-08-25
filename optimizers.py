@@ -1,6 +1,7 @@
 import torch
+from typing import Optional, Callable
 
-class _BaseOptimizer(torch.optim.Optimizer):
+class _BaseOptimizer(torch.optim.Optimizer):  # type: ignore
     def __init__(self, params, lr, beta: float = 0.9, beta2: float = 0.999,
                  weight_decay: float = 0.0, ns_iters: int = 5, eps: float = 1e-8):
 
@@ -37,11 +38,11 @@ class _BaseOptimizer(torch.optim.Optimizer):
     def update_weights(self, param, NS):
         pass
 
-    def second_moment_update(self, param, NS, beta, eps):
+    def second_moment_update(self, param, NS, beta, beta2, eps):
         return NS
 
     @torch.no_grad()
-    def step(self, closure=None):
+    def step(self, closure=None):  # type: ignore
         loss = None
 
         if closure is not None:
@@ -49,14 +50,11 @@ class _BaseOptimizer(torch.optim.Optimizer):
                 loss = closure()
 
         for group in self.param_groups:
-            beta = group['beta']; lr = group['lr']; eps = group['eps']; wd = group['weight_decay']; steps = group['ns_iters']
+            beta = group['beta']; beta2 = group['beta2']; lr = group['lr']; eps = group['eps']; wd = group['weight_decay']; steps = group['ns_iters']
             for param in group['params']:
                 state = self.state[param]
                 if param.grad is None:
                     continue
-
-                if param.ndim != 2:
-                    continue # NS only applies for 2d tensor
 
                 grad = param.grad.detach()
                 if grad.dtype in {torch.float16, torch.bfloat16}:
@@ -71,7 +69,7 @@ class _BaseOptimizer(torch.optim.Optimizer):
                 NS = self._newton_shulz(momentum, eps=eps, steps=steps) # Apply N-S for 5 iterations for weight update
 
                 # Adamuon specific
-                NS = self.second_moment_update(param, NS, beta, eps)
+                NS = self.second_moment_update(param, NS, beta, beta2, eps)
 
                 if wd:
                     param.add_(param, alpha=-lr*wd)
@@ -81,14 +79,15 @@ class _BaseOptimizer(torch.optim.Optimizer):
                 param.add_(direction, alpha=-lr) # Update the weights by subtracting the gradient + muon params 
 
                 state['step'] = state.get('step', 0) + 1
-        return loss
+        
+        return loss if loss is not None else 0.0  # type: ignore
 
 class AdaMuon(_BaseOptimizer):
     def __init__(self, params, lr, beta: float = 0.9, beta2: float = 0.999,
                  weight_decay: float = 0.0, ns_iters: int = 5, eps: float = 1e-8):
         super().__init__(params, lr, beta, beta2, weight_decay, ns_iters, eps)
 
-    def second_moment_update(self, param, NS, beta, eps) -> torch.Tensor:
+    def second_moment_update(self, param, NS, beta, beta2, eps) -> torch.Tensor:
         '''
         Second moment update using exponential moving average (v)
         params:
@@ -102,7 +101,7 @@ class AdaMuon(_BaseOptimizer):
             v = torch.zeros_like(param, dtype=NS.dtype, device=NS.device)
             state['v'] = v
 
-        v = v.mul_(beta).addcmul_(NS, NS, value=(1.0-beta))
+        v = v.mul_(beta2).addcmul_(NS, NS, value=(1.0-beta2))
 
         NS = NS / (v.sqrt().add_(eps))
 
@@ -110,7 +109,6 @@ class AdaMuon(_BaseOptimizer):
         return NS
 
     def update_weights(self, param, NS):
-        # TODO FIX GAMMA
         n, m = param.shape
         denom = NS.norm(p='fro').clamp_min(1e-12)
         gamma = 0.2 * (n*m) ** 0.5 / denom
@@ -122,7 +120,6 @@ class Muon(_BaseOptimizer):
         super().__init__(params, lr, beta, beta2, weight_decay, ns_iters, eps)
 
     def update_weights(self, param, NS):
-        # FIX GAMMA
         n,m = param.shape
         gamma = 0.2 * (max(n,m)) ** 0.5
         return NS * gamma

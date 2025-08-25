@@ -1,11 +1,5 @@
 Working on:
-Implement basic transformer architecture
-- [ ] Attention block
-- [ ] ROPE
-- [ ] Tokenizer 
-- [ ] MLP
-- [ ] Layernorm for all sublayers
-- [ ] Full transformer
+Fixing rope
 
 Next task:
-Implement test suite for the architecture
+Docs etc

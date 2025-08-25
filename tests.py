@@ -1,5 +1,5 @@
-from main import AttentionBlock, Config
-from dataload import load_tiny_stories
+from model import AttentionBlock
+from main import Config, load_tiny_stories
 import torch
 
 
