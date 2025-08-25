@@ -41,8 +41,11 @@ def run_all_tests():
         print("Attention test passed")
     except Exception as e:
         print(f"Attention test failed: {e}")
+        return False
     
-    print("All tests passed!")
 
 if __name__ == "__main__":
-    run_all_tests()
+    if run_all_tests():
+        print("All tests passed!")
+    else:
+        print("Some tests failed")

@@ -44,17 +44,6 @@ lr = cfg.lr
 
 model = TransformerNetwork(cfg)
 
-matrix_params = []
-other_params = []
-
-for name, p in model.named_parameters():
-    if p.ndim == 2:     # example predicate
-        matrix_params.append(p)
-    else:
-        other_params.append(p)
-
-admuon = AdaMuon(params=matrix_params, lr=lr)
-
 class LLMTrainer:
     def __init__(self,
                  cfg,
@@ -72,6 +61,7 @@ class LLMTrainer:
 
         self.train_loader = train_loader
         self.val_loader = val_loader 
+        self.model.to(self.cfg.device)
 
         # Setup optimizers
         matrix_params = []
@@ -82,7 +72,7 @@ class LLMTrainer:
             else:
                 other_params.append(p)
         
-        self.admuon = AdaMuon(
+        self.admuon_optimizer = AdaMuon(
             params=matrix_params, 
             lr=cfg.lr,
             beta=cfg.beta,
@@ -91,7 +81,7 @@ class LLMTrainer:
             ns_iters=cfg.ns_iters,
             eps=cfg.eps
         )
-        self.other_optimizer = torch.optim.AdamW(
+        self.adam_optimizer = torch.optim.AdamW(
             other_params, 
             lr=cfg.lr,
             betas=(cfg.beta, cfg.beta2),
@@ -101,7 +91,6 @@ class LLMTrainer:
 
     def train(self):
         self.model.train()
-        self.model.to(self.cfg.device)
         
         while self.used_train_tokens < self.max_train_tokens:
             for batch in self.train_loader:
@@ -137,11 +126,11 @@ class LLMTrainer:
                 loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
                 
                 # Backward pass
-                self.admuon.zero_grad()
-                self.other_optimizer.zero_grad()
+                self.admuon_optimizer.zero_grad()
+                self.adam_optimizer.zero_grad()
                 loss.backward()
-                self.admuon.step()
-                self.other_optimizer.step()
+                self.admuon_optimizer.step()
+                self.adam_optimizer.step()
                 
                 # Update token count
                 self.used_train_tokens += targets.numel()

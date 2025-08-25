@@ -20,6 +20,8 @@ class AttentionBlock(nn.Module):
         self.head_dim = cfg.n_embed // cfg.n_head
         self.max_seq_len = cfg.max_seq_len
 
+        assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE, but got %d" % self.head_dim
+
         self.create_rope_lookup()
 
     def create_rope_lookup(self):
@@ -33,8 +35,8 @@ class AttentionBlock(nn.Module):
         inv_freq = 1.0 / (10000 ** (torch.arange(0,self.head_dim,2).float() / self.head_dim))
         frequencies = torch.outer(positions, inv_freq)
 
-        self.cos_freqs = torch.cos(frequencies)
-        self.sin_freqs = torch.sin(frequencies)
+        self.register_buffer('cos_freqs', torch.cos(frequencies), persistent=False)
+        self.register_buffer('sin_freqs', torch.sin(frequencies), persistent=False)
 
     def _apply_rope(self, q, k):
         B, N, T, H = q.shape
@@ -43,8 +45,8 @@ class AttentionBlock(nn.Module):
         # For a 2x2 block 
         # [cosm, -sinm]
         # [sinm, cosm]
-        cos_freqs = self.cos_freqs[:T,:]
-        sin_freqs = self.sin_freqs[:T,:]
+        cos_freqs = self.cos_freqs[:T,:].unsqueeze(0).unsqueeze(0).to(device=q.device, dtype=q.dtype)
+        sin_freqs = self.sin_freqs[:T,:].unsqueeze(0).unsqueeze(0).to(device=q.device, dtype=q.dtype)
 
         # We do: 
         # [cosm * q1 - sinm * q2]
@@ -64,8 +66,8 @@ class AttentionBlock(nn.Module):
         k_rot_even = k_even * cos_freqs - k_odd * sin_freqs
         k_rot_odd = k_even * sin_freqs + k_odd * cos_freqs
 
-        q_rot = torch.stack([q_rot_even, q_rot_odd], dim=-1).reshape(B,N,T,H)
-        k_rot = torch.stack([k_rot_even, k_rot_odd], dim=-1).reshape(B,N,T,H)
+        q_rot = torch.stack([q_rot_even, q_rot_odd], dim=-1).reshape(B,N,T,H).to(device=q.device, dtype=q.dtype)
+        k_rot = torch.stack([k_rot_even, k_rot_odd], dim=-1).reshape(B,N,T,H).to(device=k.device, dtype=k.dtype)
 
         return q_rot, k_rot
 

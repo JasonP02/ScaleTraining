@@ -60,9 +60,12 @@ class _BaseOptimizer(torch.optim.Optimizer):  # type: ignore
                 if grad.dtype in {torch.float16, torch.bfloat16}:
                     grad = grad.float()
 
+                param_dtype = param.dtype
+
                 momentum = state.get('momentum')
                 if momentum is None:
-                    state['momentum'] = momentum = torch.zeros_like(param, dtype=grad.dtype, device=param.device)
+                    state['momentum'] = momentum = torch.zeros_like(param, 
+                    dtype=grad.dtype, device=param.device)
                 momentum.mul_(beta).add_(grad)
                     
                 # Apply NS to momentum
@@ -76,6 +79,7 @@ class _BaseOptimizer(torch.optim.Optimizer):  # type: ignore
                 
                 # Weight update is specific to muon / adamuon
                 direction = self.update_weights(param, NS)
+                direction = direction.to(param_dtype)
                 param.add_(direction, alpha=-lr) # Update the weights by subtracting the gradient + muon params 
 
                 state['step'] = state.get('step', 0) + 1
