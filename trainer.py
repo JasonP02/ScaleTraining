@@ -1,8 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
-
-from dataload import load_tiny_stories
+import plotly.express as px
 from dataclasses import dataclass
 from torch.utils.data import DataLoader
 
@@ -10,6 +9,14 @@ from optimizers import AdaMuon, Muon
 from model import TransformerNetwork
 
 class LLMTrainer:
+    """
+    Trainer class for the LLM
+    Args:
+        cfg: Config object
+        model: Model to train
+        train_loader: DataLoader object for the train dataset
+        val_loader: DataLoader object for the validation dataset
+    """
     def __init__(self,
                  cfg,
                  model: nn.Module,
@@ -27,6 +34,12 @@ class LLMTrainer:
         self.train_loader = train_loader
         self.val_loader = val_loader 
         self.model.to(self.cfg.device)
+
+        self.loss_fn = nn.CrossEntropyLoss()
+        self.stats = {
+            'train_loss': [],
+            'val_loss': []
+        }
 
         # Setup optimizers
         matrix_params = []
@@ -54,17 +67,14 @@ class LLMTrainer:
             eps=cfg.eps
         ) 
 
-    def train(self):
+    def training_run(self):
         self.model.train()
         
         while self.used_train_tokens < self.max_train_tokens:
             for batch in self.train_loader:
-                if self.used_train_tokens >= self.max_train_tokens:
-                    break
-                    
-                # Get batch data
-                texts = batch['text']
-                
+                print(batch)
+                # Get batch data - assuming pre-tokenized data
+                input_ids = batch['input_ids'].to(self.cfg.device)
                 
                 # Forward pass
                 logits = self.model(input_ids)
@@ -74,7 +84,7 @@ class LLMTrainer:
                 logits = logits[:, :-1, :]
                 
                 # Calculate loss
-                loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
+                loss = self.loss_fn(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
                 
                 # Backward pass
                 self.admuon_optimizer.zero_grad()
@@ -86,6 +96,7 @@ class LLMTrainer:
                 # Update token count
                 self.used_train_tokens += targets.numel()
                 
+                self.stats['train_loss'].append(loss.item())
                 print(f"Train loss: {loss.item():.4f}, Tokens: {self.used_train_tokens}/{self.max_train_tokens}")
 
     def eval(self):
@@ -98,22 +109,8 @@ class LLMTrainer:
                 if self.used_val_tokens >= self.max_val_tokens:
                     break
                     
-                # Get batch data
-                texts = batch['text']
-                
-                # Simple tokenization (placeholder)
-                batch_tokens = []
-                for text in texts:
-                    tokens = [ord(c) % 1000 for c in text[:100]]
-                    batch_tokens.append(tokens)
-                
-                # Pad sequences
-                max_len = max(len(tokens) for tokens in batch_tokens)
-                input_ids = torch.zeros((len(batch_tokens), max_len), dtype=torch.long)
-                for i, tokens in enumerate(batch_tokens):
-                    input_ids[i, :len(tokens)] = torch.tensor(tokens)
-                
-                input_ids = input_ids.to(self.cfg.device)
+                # Get batch data - assuming pre-tokenized data
+                input_ids = batch['input_ids'].to(self.cfg.device)
                 
                 # Forward pass
                 logits = self.model(input_ids)
@@ -130,5 +127,15 @@ class LLMTrainer:
                 self.used_val_tokens += targets.numel()
         
         avg_loss = total_loss / total_tokens
+        self.stats['val_loss'].append(avg_loss)
         print(f"Validation loss: {avg_loss:.4f}")
         return avg_loss
+
+    def plot_stats(self, save_path: str = 'stats.png'):
+        """
+        Plot the training and validation loss and save it to the disk
+        Args:
+            save_path: Path to save the plot
+        """
+        fig = px.line(self.stats, x=list(self.stats.keys()), y=list(self.stats.values()), title='Training and Validation Loss')
+        fig.write_image(save_path)

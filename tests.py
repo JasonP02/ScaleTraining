@@ -1,14 +1,16 @@
 from model import AttentionBlock
-from main import Config, load_tiny_stories
+from dataload import load_tokenized_dataset
+from config import Config
 import torch
 
 
 
 # Test passed: the dataset properly loads a text sample (print inspection)
-def test_tiny_stories_loader(loader):
-    for i, batch in enumerate(loader):
+def test_tiny_stories_loader(cfg):
+    train_loader, val_loader = load_tokenized_dataset(cfg)
+    for i, batch in enumerate(train_loader):
         print(f"Batch {i}")
-        print(f"Sample: \n {batch['text'][0][:10]}")
+        print(f"Sample: \n {batch['input_ids'][0][:10]}")
         if i>3:
             break
 
@@ -31,9 +33,8 @@ def run_all_tests():
     cfg = Config()
 
     # Test the dataloader
-    train_loader, _ = load_tiny_stories(cfg)
     print("== Testing tinystories loader ==")
-    test_tiny_stories_loader(train_loader)
+    test_tiny_stories_loader(cfg)
 
     print(f'\n == Testing Attention Block ==')
     try:
@@ -42,6 +43,7 @@ def run_all_tests():
     except Exception as e:
         print(f"Attention test failed: {e}")
         return False
+
     
 
 if __name__ == "__main__":

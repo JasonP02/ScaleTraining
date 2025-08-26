@@ -2,6 +2,17 @@ import torch
 from typing import Optional, Callable
 
 class _BaseOptimizer(torch.optim.Optimizer):  # type: ignore
+    """
+    Base optimizer class
+    Args:
+        params: Parameters to optimize
+        lr: Learning rate
+        beta: Beta parameter for the optimizer
+        beta2: Beta2 parameter for the optimizer
+        weight_decay: Weight decay parameter
+        ns_iters: Number of Newton Shulz iterations
+        eps: Epsilon value for numerical stability
+    """
     def __init__(self, params, lr, beta: float = 0.9, beta2: float = 0.999,
                  weight_decay: float = 0.0, ns_iters: int = 5, eps: float = 1e-8):
 
@@ -113,6 +124,12 @@ class AdaMuon(_BaseOptimizer):
         return NS
 
     def update_weights(self, param, NS):
+        """
+        Update the weights of the parameters
+        Args:
+            param: Parameter to update
+            NS: Newton Shulz matrix
+        """
         n, m = param.shape
         denom = NS.norm(p='fro').clamp_min(1e-12)
         gamma = 0.2 * (n*m) ** 0.5 / denom
@@ -124,6 +141,12 @@ class Muon(_BaseOptimizer):
         super().__init__(params, lr, beta, beta2, weight_decay, ns_iters, eps)
 
     def update_weights(self, param, NS):
+        """
+        Update the weights of the parameters
+        Args:
+            param: Parameter to update
+            NS: Newton Shulz matrix
+        """
         n,m = param.shape
         gamma = 0.2 * (max(n,m)) ** 0.5
         return NS * gamma

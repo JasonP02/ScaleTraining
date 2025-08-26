@@ -27,3 +27,6 @@ class Config():
     weight_decay: float = 0.0
     ns_iters: int = 5
     eps: float = 1e-8
+    
+    # Data path
+    data_path: str = 'datasets'
