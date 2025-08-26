@@ -1,4 +1,9 @@
-rope-thoughts.md
-TODO.md
-BUGS.md
 datasets/
+notes/
+*.png
+*.pt
+*.pth
+*.pkl
+*.pt
+*.pth
+*.pkl
