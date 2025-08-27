@@ -4,6 +4,9 @@ import torch
 import plotly.express as px
 from dataclasses import dataclass
 from torch.utils.data import DataLoader
+from torch.amp import autocast
+from transformers import is_av_available
+from torch.utils.checkpoint import checkpoint as ckpt
 
 from optimizers import AdaMuon, Muon
 from model import TransformerNetwork
@@ -67,37 +70,66 @@ class LLMTrainer:
             eps=cfg.eps
         ) 
 
+    def debug_memory(self):
+        try:
+            peak_alloc = torch.cuda.max_memory_allocated() / (1024**2)
+            peak_reserv = torch.cuda.max_memory_reserved() / (1024**2)
+            print(f"peak MB after step: alloc={peak_alloc:.2f}, reserved={peak_reserv:.2f}")
+        except Exception as e:
+            print(f"peak mem debug skipped: {e}")
+
     def training_run(self):
         self.model.train()
+        accum_steps = self.cfg.accum_steps
+
+        if torch.cuda.is_av_available():
+            torch.cuda.reset_peak_memory_stats()
+
+        micro_batch = self.cfg.batch_size
+        steps_in_accum = 0
+
+        self.adam_optimizer.zero_grad()
+        self.adam_optimizer.zero_grad()
         
         while self.used_train_tokens < self.max_train_tokens:
-            for batch in self.train_loader:
-                print(batch)
-                # Get batch data - assuming pre-tokenized data
+            for idx, batch in enumerate(self.train_loader):
                 input_ids = batch['input_ids'].to(self.cfg.device)
                 
-                # Forward pass
-                logits = self.model(input_ids)
+                with autocast(dtype=torch.bfloat16, device_type='cuda'):
+                    logits = self.model(input_ids)
+                    targets = input_ids[:, 1:]
+                    logits = logits[:, :-1, :]
+                    
+                    # Calculate loss
+                    loss = self.loss_fn(
+                        logits.reshape(-1, logits.size(-1)), targets.reshape(-1)) / accum_steps
                 
-                # Create targets (shifted input_ids)
-                targets = input_ids[:, 1:]
-                logits = logits[:, :-1, :]
-                
-                # Calculate loss
-                loss = self.loss_fn(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
-                
-                # Backward pass
-                self.admuon_optimizer.zero_grad()
-                self.adam_optimizer.zero_grad()
+                if self.cfg.debug_memory and torch.cuda.is_available():
+                    print("memory stats before step")
+                    self.debug_memory()
+
                 loss.backward()
-                self.admuon_optimizer.step()
-                self.adam_optimizer.step()
-                
-                # Update token count
+                step_in_accum += 1
+
                 self.used_train_tokens += targets.numel()
+
+                if step_in_accum == accum_steps:
+                    self.admuon_optimizer.step()
+                    self.adam_optimizer.step()
+                    self.admuon_optimizer.zero_grad()
+                    self.adam_optimizer.zero_grad()
+                    step_in_accum = 0
+
+                if self.cfg.debug_memory and torch.cuda.is_available():
+                    print("Memory stats after step")
+                    self.debug_memory()
                 
+
+                if idx % 10 == 0:
+                    print(f"Train loss: {loss.item():.4f}, Tokens: {self.used_train_tokens}/{self.max_train_tokens}")
+
                 self.stats['train_loss'].append(loss.item())
-                print(f"Train loss: {loss.item():.4f}, Tokens: {self.used_train_tokens}/{self.max_train_tokens}")
+
 
     def eval(self):
         self.model.eval()

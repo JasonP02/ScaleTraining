@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint as ckpt
+
 
 
 class AttentionBlock(nn.Module):
@@ -131,13 +133,16 @@ class TransformerNetwork(nn.Module):
             TransformerBlock(cfg, ) for _ in range(cfg.n_layer)
         ])
         self.ln = nn.LayerNorm(cfg.n_embed)
+        self.use_checkpoint = cfg.use_checkpoint
 
     def forward(self, x):
-        B,T = x.shape
         x = self.token_embedding(x)
 
         for block in self.transformer_blocks:
-            x = block(x)
+            if self.training and self.use_checkpoint:
+                x = ckpt(block, x)
+            else:
+                x = block(x)
 
         x = self.ln(x)
         x = self.W_ue(x)

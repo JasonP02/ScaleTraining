@@ -4,10 +4,20 @@ import torch
 @dataclass
 class Config():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    batch_size: int = 256
-    vocab_size: int = 16000
+    batch_size: int = 64
+    accum_steps: int = 2
+    vocab_size: int = 50257
     n_layer: int = 1
     max_seq_len: int = 1000
+
+    use_checkpoint: bool = True
+
+    # Kernel stuff
+    use_flash_dsp: bool = False
+    use_mem_efficent_sdp: bool = True
+    use_math_sdp: bool = False
+
+    debug_memory: bool = True # For debug...
 
     n_head: int = 4
     n_embed: int = 256
