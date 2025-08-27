@@ -2,14 +2,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 import plotly.express as px
-from dataclasses import dataclass
 from torch.utils.data import DataLoader
 from torch.amp import autocast
-from transformers import is_av_available
-from torch.utils.checkpoint import checkpoint as ckpt
 
 from optimizers import AdaMuon, Muon
-from model import TransformerNetwork
 
 class LLMTrainer:
     """
@@ -82,11 +78,10 @@ class LLMTrainer:
         self.model.train()
         accum_steps = self.cfg.accum_steps
 
-        if torch.cuda.is_av_available():
+        if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
 
-        micro_batch = self.cfg.batch_size
-        steps_in_accum = 0
+        step_in_accum = 0
 
         self.adam_optimizer.zero_grad()
         self.adam_optimizer.zero_grad()
@@ -94,33 +89,45 @@ class LLMTrainer:
         while self.used_train_tokens < self.max_train_tokens:
             for idx, batch in enumerate(self.train_loader):
                 input_ids = batch['input_ids'].to(self.cfg.device)
+                attn_mask = batch.get('attention_mask', None)
+                if attn_mask is not None:
+                    attn_mask = attn_mask.to(self.cfg.device)
                 
                 with autocast(dtype=torch.bfloat16, device_type='cuda'):
                     logits = self.model(input_ids)
                     targets = input_ids[:, 1:]
                     logits = logits[:, :-1, :]
+
+                    if attn_mask is not None:
+                        target_mask = attn_mask[:, 1:]
+                        ignore = (target_mask == 0)
+                        targets = targets.clone()
+                        targets[ignore] = -100
                     
                     # Calculate loss
                     loss = self.loss_fn(
                         logits.reshape(-1, logits.size(-1)), targets.reshape(-1)) / accum_steps
                 
-                if self.cfg.debug_memory and torch.cuda.is_available():
-                    print("memory stats before step")
-                    self.debug_memory()
+                # if self.cfg.debug_memory and (idx % 25 == 0):
+                #     print(f"dtypes: logits={logits.dtype}, loss={loss.dtype}, bf16_supported={torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False}")
 
                 loss.backward()
                 step_in_accum += 1
 
-                self.used_train_tokens += targets.numel()
+                num_tokens = targets.ne(-100).sum().item() if attn_mask is not None else targets.numel() 
+                self.used_train_tokens += num_tokens
 
                 if step_in_accum == accum_steps:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.cfg.grad_clip_norm)
+
                     self.admuon_optimizer.step()
                     self.adam_optimizer.step()
-                    self.admuon_optimizer.zero_grad()
-                    self.adam_optimizer.zero_grad()
+                    self.admuon_optimizer.zero_grad(set_to_none=True)
+                    self.adam_optimizer.zero_grad(set_to_none=True)
                     step_in_accum = 0
+                    self.stats['train_loss'].append(loss.item() * accum_steps)
 
-                if self.cfg.debug_memory and torch.cuda.is_available():
+                if self.cfg.debug_memory and torch.cuda.is_available() and (idx % 100 == 0):
                     print("Memory stats after step")
                     self.debug_memory()
                 
@@ -128,7 +135,6 @@ class LLMTrainer:
                 if idx % 10 == 0:
                     print(f"Train loss: {loss.item():.4f}, Tokens: {self.used_train_tokens}/{self.max_train_tokens}")
 
-                self.stats['train_loss'].append(loss.item())
 
 
     def eval(self):

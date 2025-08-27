@@ -128,7 +128,8 @@ class TransformerNetwork(nn.Module):
         super().__init__()
         # We need to create: embedding matrix, stacked transformer block, out logits
         self.token_embedding = nn.Embedding(cfg.vocab_size, cfg.n_embed)
-        self.W_ue = nn.Linear(cfg.n_embed, cfg.vocab_size)
+        self.W_ue = nn.Linear(cfg.n_embed, cfg.vocab_size, bias=cfg.UE_bias)
+        self.W_ue.weight = self.token_embedding.weight
         self.transformer_blocks = nn.ModuleList([
             TransformerBlock(cfg, ) for _ in range(cfg.n_layer)
         ])

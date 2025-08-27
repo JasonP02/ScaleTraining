@@ -5,16 +5,17 @@ import torch
 class Config():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     batch_size: int = 64
-    accum_steps: int = 2
+    accum_steps: int = 8
     vocab_size: int = 50257
     n_layer: int = 1
     max_seq_len: int = 1000
+    grad_clip_norm: float = 1.0
 
     use_checkpoint: bool = True
 
     # Kernel stuff
-    use_flash_dsp: bool = False
-    use_mem_efficent_sdp: bool = True
+    use_flash_sdp: bool = False
+    use_mem_efficient_sdp: bool = True
     use_math_sdp: bool = False
 
     debug_memory: bool = True # For debug...
@@ -24,6 +25,7 @@ class Config():
     bias: bool = True
     attn_dropout: float = 0.2
     resid_dropout: float = 0.2
+    UE_bias: bool = False
 
     n_hidden: int = 256*4
     momentum_coef: float = 0.99
