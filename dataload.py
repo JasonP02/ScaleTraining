@@ -1,11 +1,26 @@
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from dataclasses import dataclass
-from transformers import AutoTokenizer, GPT2Tokenizer
+from transformers import AutoTokenizer, GPT2Tokenizer, dynamic_rope_update
 import torch
 from config import Config
 
+def dynamic_collate_fn(batch, pad_token):
+    max_len = max(len(item['input_ids']) for item in batch)
+
+    padded_batch = []
+    for item in batch:
+        seq = item['input_ids']
+        padding_needed = max_len - len(seq)
+        if padding_needed > 0:
+            padded_seq = seq + [pad_token] * padding_needed
+        else:
+            padded_seq = seq
+        padded_batch.append(padded_seq)
+        
+    return {'input_ids': torch.tensor(padded_batch)}
 # Loading tinystories
+
 def load_tokenized_dataset(cfg):
     """
     Load the tokenized dataset from the disk
@@ -25,8 +40,8 @@ def load_tokenized_dataset(cfg):
     train_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask'])
     val_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask'])
     
-    train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=cfg.batch_size, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, collate_fn=dynamic_collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=cfg.batch_size, shuffle=False, collate_fn=dynamic_collate_fn)
     return train_loader, val_loader
 
 
@@ -48,11 +63,14 @@ def tokenize_dataset(dataset_name, tokenizer, save_path, tok_type='hf', max_leng
             tokenizer.pad_token = tokenizer.eos_token
     elif tok_type == 'gpt2':
         tokenizer = GPT2Tokenizer.from_pretrained(tokenizer)
+    elif tok_type == 'custom':
+        # TODO: Train tokenizer and allow access here
+        pass
     else:
         raise ValueError(f"Tokenizer type {tok_type} not supported")
  
     def tokenize_function(examples):
-        return tokenizer(examples['text'], truncation=True, max_length=max_length, padding='max_length')
+        return tokenizer(examples['text'], truncation=True, max_length=max_length, padding=False)
 
     
     # Tokenize both train and validation splits directly
@@ -62,6 +80,7 @@ def tokenize_dataset(dataset_name, tokenizer, save_path, tok_type='hf', max_leng
     # Save train and validation separately
     tokenized_train_dataset.save_to_disk(f'{save_path}/train')
     tokenized_val_dataset.save_to_disk(f'{save_path}/val')
+
 
 if __name__ == '__main__':
     cfg = Config()

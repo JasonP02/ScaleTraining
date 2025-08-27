@@ -7,8 +7,6 @@ from torch.utils.checkpoint import checkpoint as ckpt
 
 class AttentionBlock(nn.Module):
     def __init__(self, cfg):
-        # TODO: Add Rope
-
         super().__init__()
         assert cfg.n_embed % cfg.n_head == 0 # Ensure that embedding can be evenly split between heads
         self.kqv_block = nn.Linear(cfg.n_embed, cfg.n_embed * 3, bias=cfg.bias) # 3E, E

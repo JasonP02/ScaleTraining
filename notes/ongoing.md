@@ -1,5 +1,5 @@
 Working on:
-Adding docstrings, cleaning up code
+W&B integration
 
 Next task:
-Finalize training script, add visualisations, do small training run to verify optimizer efficacy.
+Train a custom tokenizer

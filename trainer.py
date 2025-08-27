@@ -82,10 +82,8 @@ class LLMTrainer:
             torch.cuda.reset_peak_memory_stats()
 
         step_in_accum = 0
+        total_loss = 0
 
-        self.adam_optimizer.zero_grad()
-        self.adam_optimizer.zero_grad()
-        
         while self.used_train_tokens < self.max_train_tokens:
             for idx, batch in enumerate(self.train_loader):
                 input_ids = batch['input_ids'].to(self.cfg.device)
@@ -112,6 +110,7 @@ class LLMTrainer:
                 #     print(f"dtypes: logits={logits.dtype}, loss={loss.dtype}, bf16_supported={torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False}")
 
                 loss.backward()
+                total_loss += loss.item() * accum_steps
                 step_in_accum += 1
 
                 num_tokens = targets.ne(-100).sum().item() if attn_mask is not None else targets.numel() 
@@ -125,7 +124,8 @@ class LLMTrainer:
                     self.admuon_optimizer.zero_grad(set_to_none=True)
                     self.adam_optimizer.zero_grad(set_to_none=True)
                     step_in_accum = 0
-                    self.stats['train_loss'].append(loss.item() * accum_steps)
+                    total_loss = 0
+                    self.stats['train_loss'].append(loss.item() / accum_steps)
 
                 if self.cfg.debug_memory and torch.cuda.is_available() and (idx % 100 == 0):
                     print("Memory stats after step")
