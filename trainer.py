@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 from torch.amp import autocast
 
 from optimizers import AdaMuon, Muon
+import wandb
 
 class LLMTrainer:
     """
@@ -65,6 +66,8 @@ class LLMTrainer:
             weight_decay=cfg.weight_decay,
             eps=cfg.eps
         ) 
+
+        wandb.init(project=cfg.project_name, entity='thajpo')
 
     def debug_memory(self):
         try:
@@ -130,6 +133,9 @@ class LLMTrainer:
                 if self.cfg.debug_memory and torch.cuda.is_available() and (idx % 100 == 0):
                     print("Memory stats after step")
                     self.debug_memory()
+
+                if self.used_train_tokens % 100 == 0:
+                    wandb.log({'used tokens': self.used_train_tokens, "loss": self.stats['train_loss'][-1]})
                 
 
                 if idx % 10 == 0:
