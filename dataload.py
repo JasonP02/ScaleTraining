@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from transformers import AutoTokenizer, GPT2Tokenizer, dynamic_rope_update
 import torch
 from config import Config
+from functools import partial
 
 def dynamic_collate_fn(batch, pad_token):
     max_len = max(len(item['input_ids']) for item in batch)
@@ -32,6 +33,13 @@ def load_tokenized_dataset(cfg):
     """
     from datasets import load_from_disk
     
+    # Load the tokenizer to get pad_token_id
+    # TODO: Make tokenizer more generalized... cfg based.
+    tokenizer = AutoTokenizer.from_pretrained('EleutherAI/gpt-neo-125M')
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    pad_token = tokenizer.pad_token_id
+    
     # Load the saved datasets
     train_dataset = load_from_disk(f'{cfg.data_path}/train')
     val_dataset = load_from_disk(f'{cfg.data_path}/val')
@@ -40,8 +48,11 @@ def load_tokenized_dataset(cfg):
     train_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask'])
     val_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask'])
     
-    train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, collate_fn=dynamic_collate_fn)
-    val_loader = DataLoader(val_dataset, batch_size=cfg.batch_size, shuffle=False, collate_fn=dynamic_collate_fn)
+    # Create collate function with the correct pad_token
+    collate_fn = partial(dynamic_collate_fn, pad_token=pad_token)
+    
+    train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
     return train_loader, val_loader
 
 
@@ -64,7 +75,6 @@ def tokenize_dataset(dataset_name, tokenizer, save_path, tok_type='hf', max_leng
     elif tok_type == 'gpt2':
         tokenizer = GPT2Tokenizer.from_pretrained(tokenizer)
     elif tok_type == 'custom':
-        # TODO: Train tokenizer and allow access here
         pass
     else:
         raise ValueError(f"Tokenizer type {tok_type} not supported")
