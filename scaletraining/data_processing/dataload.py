@@ -1,36 +1,14 @@
 from torch.utils.data import DataLoader
-from src.config import Config
+from datasets import load_from_disk
 
-def collate_function(batch):
-    for item in batch:
-        print(item[1])
-        print(item[0])
+def build_loaders(packed_path: str, batch_size: int):
+    train = load_from_disk(f"{packed_path}/train").with_format("torch", columns=["input_ids", "labels"])
+    train_loader = DataLoader(train, batch_size=batch_size, shuffle=True, drop_last=True)
 
-def load_tokenized_dataset(cfg):
-    """
-    Load the tokenized dataset from the disk
-    Args:
-        cfg: Config object
-    Returns:
-        train_loader: DataLoader object for the train dataset
-        val_loader: DataLoader object for the validation dataset
-    """
-    from datasets import load_from_disk
-    
-    # Load the saved datasets
-    train_dataset = load_from_disk(f'{cfg.tokenized_path}/train')
-    val_dataset = load_from_disk(f'{cfg.tokenized_path}/val')
-    
-    # Create collate function with the correct pad_token
-    train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, collate_fn=self.collate_function)
-    val_loader = DataLoader(val_dataset, batch_size=cfg.batch_size, shuffle=False, collate_fn=self.collate_function)
+    val_loader = None
+    try:
+        val = load_from_disk(f"{packed_path}/val").with_format("torch", columns=["input_ids", "labels"])
+        val_loader = DataLoader(val, batch_size=batch_size, shuffle=False, drop_last=False)
+    except Exception:
+        pass
     return train_loader, val_loader
-
-
-if __name__ == '__main__':
-    cfg = Config()
-    train_loader, val_loader = load_tokenized_dataset(cfg)
-    print("Train batch example:")
-    print(next(iter(train_loader)))
-    print("\nValidation batch example:")
-    print(next(iter(val_loader)))
