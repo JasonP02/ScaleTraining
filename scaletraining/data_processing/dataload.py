@@ -1,5 +1,5 @@
 from torch.utils.data import DataLoader
-from config import Config
+from src.config import Config
 
 def collate_function(batch):
     for item in batch:
@@ -18,8 +18,8 @@ def load_tokenized_dataset(cfg):
     from datasets import load_from_disk
     
     # Load the saved datasets
-    train_dataset = load_from_disk(f'{cfg.data_path}/train')
-    val_dataset = load_from_disk(f'{cfg.data_path}/val')
+    train_dataset = load_from_disk(f'{cfg.tokenized_path}/train')
+    val_dataset = load_from_disk(f'{cfg.tokenized_path}/val')
     
     # Create collate function with the correct pad_token
     train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, collate_fn=self.collate_function)
@@ -34,5 +34,3 @@ if __name__ == '__main__':
     print(next(iter(train_loader)))
     print("\nValidation batch example:")
     print(next(iter(val_loader)))
-
-

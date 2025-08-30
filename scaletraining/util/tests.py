@@ -1,6 +1,6 @@
 from model import AttentionBlock
 from dataload import load_tokenized_dataset
-from config import Config
+from src.config import Config
 import torch
 
 

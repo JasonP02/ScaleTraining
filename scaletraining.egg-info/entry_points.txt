@@ -1,0 +1,2 @@
+[console_scripts]
+scaletraining-tokenize = scaletraining.data_processing.tokenization:main

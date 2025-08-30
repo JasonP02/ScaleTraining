@@ -41,6 +41,9 @@ class Config():
     eps: float = 1e-8
     
     # Data path
-    data_path: str = 'datasets'
-    project_name: str = 'tiny-stories-base'
-    dataset_name: str = 'roneneldan/TinyStories'
+    tokenized_path: str = 'datasets'
+    wandb_project_name: str = 'tiny-stories-base'
+    hf_dataset_names: str = 'roneneldan/TinyStories'
+
+    tokenizer: str = 'EleutherAI/gpt-neo-125M'
+    tokenizer_type: str = 'hf'
