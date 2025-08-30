@@ -1,3 +1,4 @@
+
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from dataclasses import dataclass
@@ -58,48 +59,16 @@ class Tokenization():
         tokenized_train_dataset.save_to_disk(f'{self.save_path}/train')
         tokenized_val_dataset.save_to_disk(f'{self.save_path}/val')
 
-    def collate_function(batch):
-        for item in batch:
-            print(item[1])
-            print(item[0])
-
-    def load_tokenized_dataset(cfg):
-        """
-        Load the tokenized dataset from the disk
-        Args:
-            cfg: Config object
-        Returns:
-            train_loader: DataLoader object for the train dataset
-            val_loader: DataLoader object for the validation dataset
-        """
-        from datasets import load_from_disk
-        
-        # Load the saved datasets
-        train_dataset = load_from_disk(f'{cfg.data_path}/train')
-        val_dataset = load_from_disk(f'{cfg.data_path}/val')
-        
-        # Create collate function with the correct pad_token
-        train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, collate_fn=self.collate_function)
-        val_loader = DataLoader(val_dataset, batch_size=cfg.batch_size, shuffle=False, collate_fn=self.collate_function)
-        return train_loader, val_loader
-
 
 if __name__ == '__main__':
     cfg = Config()
     tokenizer = Tokenization(cfg)
 
-    # # Tokenize and split the dataset
-    # tokenize_dataset(
-    #     dataset_name='roneneldan/TinyStories',
-    #     tokenizer='EleutherAI/gpt-neo-125M',
-    #     save_path=cfg.data_path,
-    #     tok_type='hf'
-    # )
-                     
-    train_loader, val_loader = load_tokenized_dataset(cfg)
-    print("Train batch example:")
-    print(next(iter(train_loader)))
-    print("\nValidation batch example:")
-    print(next(iter(val_loader)))
-
+    # Tokenize and split the dataset
+    tokenizer.tokenize_dataset(
+        dataset_name='roneneldan/TinyStories',
+        tokenizer='EleutherAI/gpt-neo-125M',
+        save_path=cfg.data_path,
+        tok_type='hf'
+    )
 
