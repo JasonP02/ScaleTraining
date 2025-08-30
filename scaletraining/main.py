@@ -1,5 +1,5 @@
 from trainer import LLMTrainer
-from config import Config
+from src.config import Config
 from dataload import load_tokenized_dataset
 from model import TransformerNetwork
 from utils import configure_rocm_and_sdp, clear_cuda_cache

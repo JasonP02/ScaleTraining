@@ -1,36 +1,39 @@
 
+from dataclasses import dataclass
+from functools import partial
+import argparse
+
 from datasets import load_dataset
 from torch.utils.data import DataLoader
-from dataclasses import dataclass
-from transformers import AutoTokenizer, GPT2Tokenizer, dynamic_rope_update
-import torch
-from config import Config
-from functools import partial
+from transformers import AutoTokenizer, GPT2Tokenizer
+
+from scaletraining.config import Config
 
 
 
 class Tokenization():
     def __init__(self, cfg):
-        self.tokenizer, self.eos_token = self.get_tok_and_eos(cfg.tok_type)
-        self.max_length = cfg.max_length
-        self.save_path = cfg.data_path
+        self.tokenizer, self.eos_token = self.get_tok_and_eos(cfg.tokenizer_type, cfg.tokenizer)
+        self.max_length = cfg.max_seq_len
+        self.save_path = cfg.tokenized_path
 
         try:
-            self.dataset = load_dataset(cfg.dataset_name)
+            self.dataset = load_dataset(cfg.hf_dataset_names)
         except Exception as e:
             print(f"Could not load dataset: {e}")
 
-    def get_tok_and_eos(self, tok_type):
+    def get_tok_and_eos(self, tok_type, tok_name):
         if tok_type == 'hf':
-            tokenizer = AutoTokenizer.from_pretrained(tokenizer)
+            tokenizer = AutoTokenizer.from_pretrained(tok_name)
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token
         elif tok_type == 'gpt2':
-            tokenizer = GPT2Tokenizer.from_pretrained(tokenizer)
+            tokenizer = GPT2Tokenizer.from_pretrained(tok_name)
         elif tok_type == 'custom':
-            pass
+            raise NotImplementedError("Custom tokenizer type not implemented")
         else:
             raise ValueError(f"Tokenizer type {tok_type} not supported")
+        return tokenizer, tokenizer.eos_token
 
     def tokenize_dataset(self):
         """
@@ -59,16 +62,20 @@ class Tokenization():
         tokenized_train_dataset.save_to_disk(f'{self.save_path}/train')
         tokenized_val_dataset.save_to_disk(f'{self.save_path}/val')
 
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", default=None, help="HF dataset name to override config")
+    parser.add_argument("--tokenizer", default=None, help="HF tokenizer name to override config")
+    parser.add_argument("--out", default=None, help="Output dir to override config")
+    args = parser.parse_args()
+
+    cfg = Config()
+    if args.dataset: cfg.hf_dataset_names = args.dataset
+    if args.tokenizer: cfg.tokenizer = args.tokenizer
+    if args.out: cfg.tokenized_path = args.out
+
+    tokenizer = Tokenization(cfg)
+    tokenizer.tokenize_dataset()
 
 if __name__ == '__main__':
-    cfg = Config()
-    tokenizer = Tokenization(cfg)
-
-    # Tokenize and split the dataset
-    tokenizer.tokenize_dataset(
-        dataset_name='roneneldan/TinyStories',
-        tokenizer='EleutherAI/gpt-neo-125M',
-        save_path=cfg.data_path,
-        tok_type='hf'
-    )
-
+    main()
