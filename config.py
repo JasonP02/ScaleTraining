@@ -43,3 +43,4 @@ class Config():
     # Data path
     data_path: str = 'datasets'
     project_name: str = 'tiny-stories-base'
+    dataset_name: str = 'roneneldan/TinyStories'
