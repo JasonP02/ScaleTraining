@@ -9,7 +9,11 @@ description = "Training platform for language models"
 readme = "README.md"
 requires-python = ">=3.10"
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["scaletraining*"]
 exclude = ["datasets*", "notes*", "notebooks*", "wandb*"]
 

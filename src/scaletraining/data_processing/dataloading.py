@@ -23,7 +23,7 @@ def build_loaders(cfg):
             packed_path=cfg.batched_tokenized_path,
             block_size=cfg.max_seq_len,
             num_proc=cfg.pack_num_proc,
-            map_batch_size=cfg.batch_size,
+            map_batch_size=cfg.pack_map_batch_size,
             writer_batch_size=cfg.pack_writer_batch_size,
         )
 
