@@ -8,6 +8,7 @@ datasets/
 *.h5
 *.npz
 
+AGENTS.md
 # Logs and outputs
 *.log
 train.log
