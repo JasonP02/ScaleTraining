@@ -125,7 +125,6 @@ def save_run_manifest(cfg, out_dir: str, extra: Optional[Dict[str, Any]] = None)
     manifest['implementation'] = {
         'optimizer': 'baseline_adam' if getattr(cfg, 'use_baseline_adam', False) else getattr(cfg, 'primary_optimizer', 'unknown'),
         'rope': {
-            'enabled': getattr(cfg, 'use_rope', True),
             'implementation': getattr(cfg, 'rope_implementation', 'custom'),
             'theta': getattr(cfg, 'rope_config', {}).get('theta', 10000),
         }
@@ -178,7 +177,6 @@ def init_wandb(cfg: Any, config_dict: Optional[Dict[str, Any]] = None) -> None:
     if getattr(cfg, 'log_implementation_details', True):
         impl_details = {
             'optimizer': 'baseline_adam' if getattr(cfg, 'use_baseline_adam', False) else getattr(cfg, 'primary_optimizer', 'unknown'),
-            'rope_enabled': getattr(cfg, 'use_rope', True),
             'rope_implementation': getattr(cfg, 'rope_implementation', 'custom'),
         }
         if config_dict is not None:
@@ -186,9 +184,20 @@ def init_wandb(cfg: Any, config_dict: Optional[Dict[str, Any]] = None) -> None:
         else:
             config_dict = impl_details
 
-    wandb.init(project=getattr(cfg, 'wandb_project_name', 'scaletraining'),
-               entity=os.environ.get('WANDB_ENTITY', None),
-               config=config_dict)
+    # If a W&B run already exists (e.g., under wandb agent), do not re-init.
+    # Instead, update the config to include any implementation details.
+    if getattr(wandb, "run", None) is not None:
+        try:
+            if config_dict:
+                wandb.config.update(config_dict, allow_val_change=True)
+        except Exception:
+            pass
+    else:
+        wandb.init(
+            project=getattr(cfg, 'wandb_project_name', 'scaletraining'),
+            entity=os.environ.get('WANDB_ENTITY', None),
+            config=config_dict,
+        )
     try:
         wandb.define_metric("used tokens")
         wandb.define_metric("train_per_token_loss", step_metric="used tokens")
@@ -197,33 +206,10 @@ def init_wandb(cfg: Any, config_dict: Optional[Dict[str, Any]] = None) -> None:
 
 
 def log_dataset_artifacts(tok_dir: str, pack_dir: str, cfg: Any) -> None:
-    """Log tokenized/packed dataset directories as W&B Artifacts.
-
-    Args:
-        tok_dir: Filesystem path to tokenized dataset root (contains train/ and optional val/).
-        pack_dir: Filesystem path to packed dataset root (contains train/ and optional val/).
-        cfg: Config-like object; stored as artifact metadata.
-    """
-    import wandb
-    meta = {k: getattr(cfg, k) for k in getattr(cfg, 'keys', lambda: [])()} if hasattr(cfg, 'keys') else vars(cfg) if hasattr(cfg, '__dict__') else {}
-    art_tok = wandb.Artifact("tokenized", type="dataset", metadata=meta)
-    art_tok.add_dir(tok_dir)
-    wandb.log_artifact(art_tok)
-
-    art_pack = wandb.Artifact("packed", type="dataset", metadata=meta)
-    art_pack.add_dir(pack_dir)
-    wandb.log_artifact(art_pack)
+    """Disabled - no longer logging dataset artifacts to wandb."""
+    pass
 
 
 def log_model_artifact(model_path: str, cfg: Any) -> None:
-    """Log a saved model checkpoint file as a W&B Artifact.
-
-    Args:
-        model_path: Filesystem path to the saved model file (e.g., model.pt).
-        cfg: Config-like object; stored as artifact metadata.
-    """
-    import wandb
-    meta = {k: getattr(cfg, k) for k in getattr(cfg, 'keys', lambda: [])()} if hasattr(cfg, 'keys') else vars(cfg) if hasattr(cfg, '__dict__') else {}
-    art = wandb.Artifact("model", type="model", metadata=meta)
-    art.add_file(model_path)
-    wandb.log_artifact(art)
+    """Disabled - no longer logging model artifacts to wandb."""
+    pass

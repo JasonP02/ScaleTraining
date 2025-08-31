@@ -1,0 +1,7 @@
+hydra:
+  sweeper:
+    _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
+    params:
+      primary_optimizer: adamuon,muon,adamw
+      rope_implementation: custom,torch_builtin,none
+

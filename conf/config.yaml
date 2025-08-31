@@ -1,6 +1,13 @@
+defaults:
+  - sweeper: optuna
+  - _self_
+
 hydra:
   run:
     dir: .
+  launcher:
+    _target_: hydra_joblib.launcher.JoblibLauncher
+    n_jobs: 1
 
 # Minimal Hydra config mirroring the previous dataclass defaults.
 
@@ -21,15 +28,14 @@ UE_bias: false
 attn_dropout: 0.2
 resid_dropout: 0.2
 use_checkpoint: true
-use_rope: true          # if false, skip RoPE entirely (no positional encoding)
-rope_implementation: custom  # options: custom|torch_builtin|none
+rope_implementation: torch_builtin  # options: custom|torch_builtin|none
 rope_config:            # RoPE-specific configuration
   theta: 10000          # base frequency (currently hardcoded to 10000)
-  use_complex: false    # whether to use complex number representation
+  use_complex: true    # whether to use complex number representation
 
 # Training
 grad_clip_norm: 1.0
-max_train_tokens: 100000000
+max_train_tokens: 500000000
 max_val_tokens: 1000000000
 logits_chunk_size: 256
 
@@ -40,7 +46,7 @@ beta2: 0.999
 weight_decay: 0.0
 ns_iters: 5
 eps: 1e-8
-primary_optimizer: adamuon   # one of: adamuon|muon|adamw
+primary_optimizer: adamw   # one of: adamuon|muon|adamw
 use_baseline_adam: false      # if true, use single Adam optimizer for all params
 baseline_adam_config:         # config for baseline Adam (when use_baseline_adam=true)
   lr: 1e-4                    # can be different from main lr
@@ -58,7 +64,7 @@ pack_map_batch_size: 400
 pack_writer_batch_size: 4000
 num_proc: 8
 dataset_tag: ""
-strict_dataset_compat: true
+strict_dataset_compat: false
 
 # Tokenizer
 tokenizer_name: EleutherAI/gpt-neo-125M
@@ -70,6 +76,13 @@ output_dir: outputs
 debug_memory: true
 experiment_tags: []         # tags for experiment tracking (e.g., "baseline_adam", "no_rope")
 log_implementation_details: true # log which implementations are being used
+
+# Sweep settings
+wandb_sweep: false  # Set to true when running as sweep
+
+# Artifact control (all disabled)
+log_dataset_artifacts: false
+log_model_artifacts: false
 
 # Generation defaults (used by scaletraining-generate, can override via CLI)
 prompt: "Once upon a time"

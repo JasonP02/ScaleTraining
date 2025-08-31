@@ -32,7 +32,7 @@ from transformers import AutoTokenizer
 
 
 @hydra.main(version_base=None, config_path=str(Path(__file__).parent.parent.parent.parent / "conf"), config_name="config")
-def main(cfg: DictConfig) -> None:
+def main(cfg: DictConfig) -> float:
     """
     Train the model using Hydra config and log to W&B.
 
@@ -40,6 +40,28 @@ def main(cfg: DictConfig) -> None:
         cfg: Hydra DictConfig with fields matching the previous Config dataclass.
              Access via attribute syntax, e.g., cfg.batch_size. See conf/config.yaml.
     """
+    # Handle W&B sweep initialization
+    # Detect either via explicit config (wandb_sweep: true) or agent environment variables
+    sweep_env = bool(os.environ.get("WANDB_SWEEP_ID") or os.environ.get("WANDB_AGENT"))
+    if bool(getattr(cfg, 'wandb_sweep', False)) or sweep_env:
+        import wandb
+        # Ensure a run exists so wandb.config is populated by the agent
+        if getattr(wandb, "run", None) is None:
+            wandb.init()
+        # Update Hydra cfg with sweep parameters (if provided by the sweep)
+        sweep_config = wandb.config
+        try:
+            if hasattr(sweep_config, "primary_optimizer"):
+                cfg.primary_optimizer = getattr(sweep_config, "primary_optimizer")
+        except Exception:
+            pass
+        try:
+            if hasattr(sweep_config, "rope_implementation"):
+                cfg.rope_implementation = getattr(sweep_config, "rope_implementation")
+        except Exception:
+            pass
+        # Deprecated: use single rope_implementation = custom|torch_builtin|none
+    
     # Resolve device, configure kernels, and free any stale CUDA cache
     resolve_device(cfg)
     configure_rocm_and_sdp(cfg)
@@ -51,11 +73,8 @@ def main(cfg: DictConfig) -> None:
     # Build data
     train_loader, val_loader = build_loaders(cfg)
 
-    # Log dataset artifacts (tokenized + packed directories)
-    try:
-        log_dataset_artifacts(tokenized_dir(cfg), packed_dir(cfg), cfg)
-    except Exception as e:
-        print(f"Dataset artifact logging skipped: {e}")
+    # Skip dataset artifact logging
+    print("Dataset artifact logging disabled")
 
     # Model + loss
     model = TransformerNetwork(cfg)
@@ -67,14 +86,14 @@ def main(cfg: DictConfig) -> None:
     )
 
     # Training loop
-    training_run(cfg, model, train_loader, loss_fn=loss_fn)
+    stats = training_run(cfg, model, train_loader, loss_fn=loss_fn)
 
-    # Save model and log as W&B model artifact
+    # Save model locally only
     try:
         run_dir = save_model(model, cfg, getattr(cfg, "output_dir", "outputs"))
-        log_model_artifact(os.path.join(run_dir, "model.pt"), cfg)
+        print(f"Model saved locally to: {run_dir}")
     except Exception as e:
-        print(f"Model save/logging skipped: {e}")
+        print(f"Model save skipped: {e}")
 
     # Optional: sample generation after training for quick qualitative check
     try:
@@ -98,6 +117,14 @@ def main(cfg: DictConfig) -> None:
     except Exception as e:
         print(f"Post-train generation skipped: {e}")
 
+    # Return an objective for Hydra sweepers (e.g., Optuna)
+    try:
+        if stats.get('train_loss'):
+            return float(stats['train_loss'][-1])
+    except Exception:
+        pass
+    return float('inf')
 
 if __name__ == "__main__":
+    # Standard Hydra entrypoint; objective value returned for sweepers
     main()
