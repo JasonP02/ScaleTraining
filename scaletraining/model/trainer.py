@@ -5,7 +5,9 @@ import plotly.express as px
 from torch.utils.data import DataLoader
 from torch.amp import autocast
 
-from optimizers import AdaMuon, Muon
+from scaletraining.model.model import TransformerNetwork
+
+from scaletraining.model.optimizers import AdaMuon, Muon
 import wandb
 
 class LLMTrainer:
@@ -19,7 +21,6 @@ class LLMTrainer:
     """
     def __init__(self,
                  cfg,
-                 model: nn.Module,
                  train_loader: DataLoader,
                  val_loader: DataLoader):
         
@@ -29,7 +30,8 @@ class LLMTrainer:
 
         self.max_val_tokens: int = cfg.max_val_tokens
         self.used_val_tokens: int = 0
-        self.model: nn.Module = model
+        # Build model internally and move to device
+        self.model: nn.Module = TransformerNetwork(cfg)
 
         self.train_loader = train_loader
         self.val_loader = val_loader 
@@ -44,7 +46,7 @@ class LLMTrainer:
         # Setup optimizers
         matrix_params = []
         other_params = []
-        for name, p in model.named_parameters():
+        for name, p in self.model.named_parameters():
             if p.ndim == 2:
                 matrix_params.append(p)
             else:
@@ -67,7 +69,7 @@ class LLMTrainer:
             eps=cfg.eps
         ) 
 
-        wandb.init(project=cfg.project_name, entity='thajpo')
+        wandb.init(project=cfg.wandb_project_name, entity='thajpo')
 
     def debug_memory(self):
         try:

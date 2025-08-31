@@ -47,6 +47,13 @@ class Config():
     wandb_project_name: str = 'tiny-stories-base'
     hf_dataset_names: str = 'roneneldan/TinyStories'
     do_packing: bool = True
+    # Packing controls (memory safety)
+    pack_num_proc: int = 1
+    pack_map_batch_size: int = 200
+    pack_writer_batch_size: int = 1000
+
+    # Tokenization parallelism
+    num_proc: int = 4
 
     tokenizer: str = 'EleutherAI/gpt-neo-125M'
     tokenizer_type: str = 'hf'
