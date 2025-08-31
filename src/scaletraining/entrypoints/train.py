@@ -7,6 +7,7 @@ Run from CLI: `python -m scaletraining.entrypoints.train` or via console script.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 import hydra
@@ -30,7 +31,7 @@ from scaletraining.inference.generation import generate_autoregressive
 from transformers import AutoTokenizer
 
 
-@hydra.main(version_base=None, config_path="../../../conf", config_name="config")
+@hydra.main(version_base=None, config_path=str(Path(__file__).parent.parent.parent.parent / "conf"), config_name="config")
 def main(cfg: DictConfig) -> None:
     """
     Train the model using Hydra config and log to W&B.

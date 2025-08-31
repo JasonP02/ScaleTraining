@@ -20,9 +20,14 @@ class AttentionBlock(nn.Module):
         self.head_dim = cfg.n_embed // cfg.n_head
         self.max_seq_len = cfg.max_seq_len
 
-        assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE, but got %d" % self.head_dim
-
-        self.create_rope_lookup()
+        # RoPE configuration
+        self.use_rope = getattr(cfg, 'use_rope', True)
+        self.rope_implementation = getattr(cfg, 'rope_implementation', 'custom')
+        self.theta = getattr(cfg, 'rope_config', {}).get('theta', 10000)
+        
+        if self.use_rope and self.rope_implementation == 'custom':
+            assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE, but got %d" % self.head_dim
+            self.create_rope_lookup()
 
     def create_rope_lookup(self):
         """
@@ -32,13 +37,14 @@ class AttentionBlock(nn.Module):
         Shape: (max_sequence_length, frequency resolution) -> (1000,10000)
         """
         positions = torch.arange(0, self.max_seq_len, 1)
-        inv_freq = 1.0 / (10000 ** (torch.arange(0,self.head_dim,2).float() / self.head_dim))
+        inv_freq = 1.0 / (self.theta ** (torch.arange(0,self.head_dim,2).float() / self.head_dim))
         frequencies = torch.outer(positions, inv_freq)
 
         self.register_buffer('cos_freqs', torch.cos(frequencies), persistent=False)
         self.register_buffer('sin_freqs', torch.sin(frequencies), persistent=False)
 
-    def _apply_rope(self, q, k):
+    def _apply_rope_custom(self, q, k):
+        """Current RoPE implementation extracted to separate method"""
         B, N, T, H = q.shape
 
         # Paper math:
@@ -71,6 +77,50 @@ class AttentionBlock(nn.Module):
 
         return q_rot, k_rot
 
+    def _apply_rope_torch_builtin(self, q, k):
+        """Use PyTorch's built-in RoPE implementation"""
+        try:
+            # PyTorch 2.3.0+ built-in RoPE
+            freqs = torch.outer(
+                torch.arange(self.max_seq_len, device=q.device),
+                1.0 / (self.theta ** (torch.arange(0, self.head_dim, 2, device=q.device).float() / self.head_dim))
+            )
+            cos_freqs = torch.cos(freqs)
+            sin_freqs = torch.sin(freqs)
+            
+            # Use built-in function if available
+            if hasattr(torch.nn.functional, 'rotary_position_embedding'):
+                return torch.nn.functional.rotary_position_embedding(q, k, cos_freqs, sin_freqs)
+            else:
+                # Fallback to manual application
+                return self._apply_rope_manual(q, k, cos_freqs, sin_freqs)
+        except Exception:
+            # Fallback to custom implementation
+            return self._apply_rope_custom(q, k)
+
+    def _apply_rope_manual(self, q, k, cos_freqs, sin_freqs):
+        """Manual RoPE application using provided frequencies"""
+        B, N, T, H = q.shape
+        
+        cos_freqs = cos_freqs[:T].unsqueeze(0).unsqueeze(0).to(device=q.device, dtype=q.dtype)
+        sin_freqs = sin_freqs[:T].unsqueeze(0).unsqueeze(0).to(device=q.device, dtype=q.dtype)
+        
+        q_even = q[...,::2]
+        q_odd = q[...,1::2]
+        k_even = k[...,::2]
+        k_odd = k[...,1::2]
+        
+        q_rot_even = q_even * cos_freqs - q_odd * sin_freqs
+        q_rot_odd = q_even * sin_freqs + q_odd * cos_freqs
+        
+        k_rot_even = k_even * cos_freqs - k_odd * sin_freqs
+        k_rot_odd = k_even * sin_freqs + k_odd * cos_freqs
+        
+        q_rot = torch.stack([q_rot_even, q_rot_odd], dim=-1).reshape(B,N,T,H).to(device=q.device, dtype=q.dtype)
+        k_rot = torch.stack([k_rot_even, k_rot_odd], dim=-1).reshape(B,N,T,H).to(device=k.device, dtype=k.dtype)
+        
+        return q_rot, k_rot
+
         
     def forward(self, x):
         B, T, E = x.shape
@@ -85,7 +135,13 @@ class AttentionBlock(nn.Module):
         k = k.view(B, T, self.n_head, E // self.n_head).transpose(1,2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, E // self.n_head).transpose(1,2) # (B, nh, T, hs)
 
-        q,k = self._apply_rope(q,k)
+        # Apply RoPE based on configuration
+        if self.use_rope:
+            if self.rope_implementation == 'torch_builtin':
+                q, k = self._apply_rope_torch_builtin(q, k)
+            elif self.rope_implementation == 'custom':
+                q, k = self._apply_rope_custom(q, k)
+            # else: no RoPE applied
 
         # SDPA takes in tensors, with dropout for attention scores
         y = torch.nn.functional.scaled_dot_product_attention(q,k,v,attn_mask=None, dropout_p=self.attn_dropout if self.training else 0, is_causal=True)

@@ -7,6 +7,9 @@ Status: implementing decoder only transformer architecture for tinystories, and 
 Quick start
 - Configure via `conf/config.yaml` (Hydra is the single source of truth).
 - Tokenize dataset: `scaletraining-tokenize`
+- Pack dataset into fixed blocks: `scaletraining-pack`
+- Fully prepare data (tokenize + pack). Supports multiple datasets in `hf_dataset_names` (list):
+  - `scaletraining-prepare-data`
 - Train: `scaletraining-train`
 - Generate: `scaletraining-generate model_path=outputs/<run>/model.pt prompt="Once upon a time"`
 

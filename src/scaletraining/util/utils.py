@@ -81,7 +81,8 @@ def read_metadata(path: str) -> Dict[str, Any]:
     try:
         with open(os.path.join(path, "metadata.json"), "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except Exception as e:
+        print(f"Warning: could not read metadata, returning empty dictionary: {e}")
         return {}
 
 
@@ -118,6 +119,16 @@ def save_run_manifest(cfg, out_dir: str, extra: Optional[Dict[str, Any]] = None)
         },
         "dataset_tag": getattr(cfg, 'dataset_tag', ''),
         "fingerprint": config_fingerprint(cfg),
+    }
+    
+    # Add implementation details
+    manifest['implementation'] = {
+        'optimizer': 'baseline_adam' if getattr(cfg, 'use_baseline_adam', False) else getattr(cfg, 'primary_optimizer', 'unknown'),
+        'rope': {
+            'enabled': getattr(cfg, 'use_rope', True),
+            'implementation': getattr(cfg, 'rope_implementation', 'custom'),
+            'theta': getattr(cfg, 'rope_config', {}).get('theta', 10000),
+        }
     }
     if extra:
         manifest.update(extra)
@@ -162,6 +173,18 @@ def init_wandb(cfg: Any, config_dict: Optional[Dict[str, Any]] = None) -> None:
         config_dict: Optional resolved config (Python dict) to store in W&B.
     """
     import wandb
+
+    # Log implementation details
+    if getattr(cfg, 'log_implementation_details', True):
+        impl_details = {
+            'optimizer': 'baseline_adam' if getattr(cfg, 'use_baseline_adam', False) else getattr(cfg, 'primary_optimizer', 'unknown'),
+            'rope_enabled': getattr(cfg, 'use_rope', True),
+            'rope_implementation': getattr(cfg, 'rope_implementation', 'custom'),
+        }
+        if config_dict is not None:
+            config_dict.update(impl_details)
+        else:
+            config_dict = impl_details
 
     wandb.init(project=getattr(cfg, 'wandb_project_name', 'scaletraining'),
                entity=os.environ.get('WANDB_ENTITY', None),
