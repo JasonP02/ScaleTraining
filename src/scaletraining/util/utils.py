@@ -4,6 +4,7 @@ import os
 import json
 import hashlib
 from typing import Dict, Any, Optional
+from pathlib import Path
 from datetime import datetime
 
 def clear_cuda_cache():
@@ -14,9 +15,12 @@ def clear_cuda_cache():
 def configure_rocm_and_sdp(cfg):
     os.environ.setdefault("PYTORCH_HIP_ALLOC_CONF", "expandable_segments:True")
     try:
-        torch.backends.cuda.enable_flash_sdp(cfg.use_flash_sdp)
-        torch.backends.cuda.enable_mem_efficient_sdp(cfg.use_mem_efficient_sdp)
-        torch.backends.cuda.enable_math_sdp(cfg.use_math_sdp)
+        if hasattr(cfg, 'use_flash_sdp'):
+            torch.backends.cuda.enable_flash_sdp(bool(getattr(cfg, 'use_flash_sdp')))
+        if hasattr(cfg, 'use_mem_efficient_sdp'):
+            torch.backends.cuda.enable_mem_efficient_sdp(bool(getattr(cfg, 'use_mem_efficient_sdp')))
+        if hasattr(cfg, 'use_math_sdp'):
+            torch.backends.cuda.enable_math_sdp(bool(getattr(cfg, 'use_math_sdp')))
     except Exception as e:
         print(f"SDP backend config skipped: {e}")
 
@@ -184,20 +188,43 @@ def init_wandb(cfg: Any, config_dict: Optional[Dict[str, Any]] = None) -> None:
         else:
             config_dict = impl_details
 
-    # If a W&B run already exists (e.g., under wandb agent), do not re-init.
-    # Instead, update the config to include any implementation details.
-    if getattr(wandb, "run", None) is not None:
-        try:
-            if config_dict:
-                wandb.config.update(config_dict, allow_val_change=True)
-        except Exception:
-            pass
-    else:
-        wandb.init(
-            project=getattr(cfg, 'wandb_project_name', 'scaletraining'),
-            entity=os.environ.get('WANDB_ENTITY', None),
-            config=config_dict,
-        )
+    # Derive a useful group/name for Hydra multiruns so runs are grouped in the UI.
+    group: Optional[str] = None
+    name: Optional[str] = None
+    try:
+        cwd = Path.cwd()
+        if "multirun" in cwd.parts:
+            # multirun/YYYY-MM-DD/HH-MM-SS/<job_num>
+            parts = list(cwd.parts)
+            idx = parts.index("multirun")
+            if idx + 2 < len(parts):
+                group = f"hydra-{parts[idx+1]}-{parts[idx+2]}"  # date-time
+            # Optional descriptive name per job
+            po = getattr(cfg, 'primary_optimizer', None)
+            rope = getattr(cfg, 'rope_implementation', None)
+            name = f"job{parts[-1]}" + (f"__{po}" if po else "") + (f"__rope={rope}" if rope else "")
+    except Exception:
+        pass
+
+    # Start a fresh run per Hydra job to ensure separate configs in W&B.
+    # If a run exists (e.g., prior job in the same process), finish it first.
+    try:
+        if getattr(wandb, "run", None) is not None:
+            wandb.finish()
+    except Exception:
+        pass
+
+    kwargs: Dict[str, Any] = {
+        'project': getattr(cfg, 'wandb_project_name', 'scaletraining'),
+        'entity': os.environ.get('WANDB_ENTITY', None),
+        'config': config_dict,
+        'reinit': True,
+    }
+    if group:
+        kwargs['group'] = group
+    if name:
+        kwargs['name'] = name
+    wandb.init(**kwargs)
     try:
         wandb.define_metric("used tokens")
         wandb.define_metric("train_per_token_loss", step_metric="used tokens")
