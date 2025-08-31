@@ -1,5 +1,6 @@
 from itertools import chain
 from datasets import load_from_disk
+from scaletraining.util.utils import write_metadata
 
 def group_texts(examples, block_size: int):
     # 1) concatenate within this map batch
@@ -18,6 +19,7 @@ def pack_and_save(
     num_proc: int = 1,
     map_batch_size: int = 200,
     writer_batch_size: int = 1000,
+    metadata: dict | None = None,
 ):
     train = load_from_disk(f"{tokenized_path}/train")
     packed_train = train.map(
@@ -49,3 +51,7 @@ def pack_and_save(
         packed_val.save_to_disk(f"{packed_path}/val")
     except Exception:
         pass  # no val split
+
+    # Save metadata for compatibility checks
+    if metadata is not None:
+        write_metadata(packed_path, metadata)
