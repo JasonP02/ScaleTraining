@@ -17,5 +17,15 @@ if __name__ == "__main__":
     trainer = LLMTrainer(cfg, train_loader, val_loader)
 
     trainer.training_run()
+    # Simple qualitative eval: generate a short story
+    try:
+        trainer.generate_sample_story(
+            prompt="Once upon a time in a small village,",
+            max_new_tokens=100,
+            temperature=1.0,
+            top_k=50,
+        )
+    except Exception as e:
+        print(f"Generation failed: {e}")
     wandb.finish()
     

@@ -9,6 +9,7 @@ from scaletraining.model.model import TransformerNetwork
 
 from scaletraining.model.optimizers import AdaMuon, Muon
 import wandb
+from transformers import AutoTokenizer
 
 class LLMTrainer:
     """
@@ -37,7 +38,8 @@ class LLMTrainer:
         self.val_loader = val_loader 
         self.model.to(self.cfg.device)
 
-        self.loss_fn = nn.CrossEntropyLoss()
+        # Use summed CE so we can normalize across chunks by total tokens
+        self.loss_fn = nn.CrossEntropyLoss(reduction='sum')
         self.stats = {
             'train_loss': [],
             'val_loss': []
@@ -71,6 +73,16 @@ class LLMTrainer:
 
         wandb.init(project=cfg.wandb_project_name, entity='thajpo')
 
+        # Lightweight tokenizer for eval/generation
+        try:
+            self._tokenizer = AutoTokenizer.from_pretrained(cfg.tokenizer_name, use_fast=True)
+            if self._tokenizer.eos_token_id is None:
+                self._tokenizer.add_special_tokens({"eos_token": ""})
+            if self._tokenizer.pad_token_id is None:
+                self._tokenizer.pad_token = self._tokenizer.eos_token
+        except Exception:
+            self._tokenizer = None
+
     def debug_memory(self):
         try:
             peak_alloc = torch.cuda.max_memory_allocated() / (1024**2)
@@ -89,7 +101,8 @@ class LLMTrainer:
         step_in_accum = 0
         total_loss = 0
 
-        while self.used_train_tokens < self.max_train_tokens:
+        stop_training = False
+        while self.used_train_tokens < self.max_train_tokens and not stop_training:
             for idx, batch in enumerate(self.train_loader):
                 input_ids = batch['input_ids'].to(self.cfg.device)
                 attn_mask = batch.get('attention_mask', None)
@@ -97,19 +110,42 @@ class LLMTrainer:
                     attn_mask = attn_mask.to(self.cfg.device)
                 
                 with autocast(dtype=torch.bfloat16, device_type='cuda'):
-                    logits = self.model(input_ids)
+                    # Compute hidden states once
+                    hidden = self.model.forward_hidden(input_ids)
                     targets = input_ids[:, 1:]
-                    logits = logits[:, :-1, :]
+                    hidden = hidden[:, :-1, :]
 
                     if attn_mask is not None:
                         target_mask = attn_mask[:, 1:]
                         ignore = (target_mask == 0)
                         targets = targets.clone()
                         targets[ignore] = -100
-                    
-                    # Calculate loss
-                    loss = self.loss_fn(
-                        logits.reshape(-1, logits.size(-1)), targets.reshape(-1)) / accum_steps
+
+                    # Count effective tokens for normalization
+                    total_effective_tokens = targets.ne(-100).sum() if attn_mask is not None else targets.numel()
+
+                    # Chunked logits/loss along time to reduce peak memory
+                    T = hidden.size(1)
+                    chunk_size = getattr(self.cfg, 'logits_chunk_size', 0) or 0
+                    if chunk_size <= 0 or chunk_size >= T:
+                        logits = self.model.W_ue(hidden)
+                        loss_sum = self.loss_fn(
+                            logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
+                    else:
+                        loss_sum = 0.0
+                        start = 0
+                        while start < T:
+                            end = min(start + chunk_size, T)
+                            logits_chunk = self.model.W_ue(hidden[:, start:end, :])
+                            targets_chunk = targets[:, start:end]
+                            loss_sum = loss_sum + self.loss_fn(
+                                logits_chunk.reshape(-1, logits_chunk.size(-1)),
+                                targets_chunk.reshape(-1)
+                            )
+                            start = end
+
+                    # Normalize by number of tokens and accumulation
+                    loss = (loss_sum / max(1, total_effective_tokens)) / accum_steps
                 
                 # if self.cfg.debug_memory and (idx % 25 == 0):
                 #     print(f"dtypes: logits={logits.dtype}, loss={loss.dtype}, bf16_supported={torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False}")
@@ -136,12 +172,60 @@ class LLMTrainer:
                     print("Memory stats after step")
                     self.debug_memory()
 
-                if self.used_train_tokens % 100 == 0:
+                if self.used_train_tokens % 100 == 0 and len(self.stats['train_loss']) > 0:
                     wandb.log({'used tokens': self.used_train_tokens, "loss": self.stats['train_loss'][-1]})
                 
 
                 if idx % 10 == 0:
                     print(f"Train loss: {loss.item():.4f}, Tokens: {self.used_train_tokens}/{self.max_train_tokens}")
+
+                # Early stop within the epoch once token budget is reached
+                if self.used_train_tokens >= self.max_train_tokens:
+                    stop_training = True
+                    break
+
+    @torch.no_grad()
+    def generate_sample_story(self,
+                               prompt: str = "Once upon a time",
+                               max_new_tokens: int = 100,
+                               temperature: float = 1.0,
+                               top_k: int = 50) -> str:
+        """
+        Simple autoregressive generation for a short story sample.
+        """
+        self.model.eval()
+        if self._tokenizer is None:
+            print("Tokenizer unavailable; skipping generation.")
+            return ""
+
+        input_ids = self._tokenizer.encode(prompt, return_tensors='pt').to(self.cfg.device)
+        for _ in range(max_new_tokens):
+            with autocast(dtype=torch.bfloat16, device_type='cuda'):
+                logits = self.model(input_ids)
+                next_token_logits = logits[:, -1, :]
+                next_token_logits = next_token_logits / max(1e-6, temperature)
+
+                if top_k is not None and top_k > 0 and top_k < next_token_logits.size(-1):
+                    topk_vals, _ = torch.topk(next_token_logits, top_k)
+                    min_topk = topk_vals[:, -1].unsqueeze(-1)
+                    next_token_logits = torch.where(next_token_logits < min_topk, torch.full_like(next_token_logits, float('-inf')), next_token_logits)
+
+                probs = torch.softmax(next_token_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+
+            input_ids = torch.cat([input_ids, next_token], dim=1)
+
+            # Stop on EOS if defined
+            if self._tokenizer.eos_token_id is not None and next_token.item() == self._tokenizer.eos_token_id:
+                break
+
+        text = self._tokenizer.decode(input_ids[0], skip_special_tokens=True)
+        print("\n=== Generated Story Sample ===\n" + text + "\n==============================\n")
+        try:
+            wandb.log({"generated_story": text})
+        except Exception:
+            pass
+        return text
 
 
 
