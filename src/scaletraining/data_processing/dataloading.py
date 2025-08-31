@@ -1,7 +1,7 @@
 from torch.utils.data import DataLoader
 from datasets import load_from_disk
 from scaletraining.data_processing.batch_packer import pack_and_save
-from scaletraining.data_processing.tokenization import Tokenization
+from scaletraining.data_processing.tokenization import tokenize_dataset
 from scaletraining.util.utils import tokenized_dir, packed_dir, read_metadata, _cfg_subset
 import os
 
@@ -14,8 +14,7 @@ def build_loaders(cfg):
     tok_dir = tokenized_dir(cfg)
     tokenized_train_dir = os.path.join(tok_dir, "train")
     if not os.path.isdir(tokenized_train_dir):
-        tokenizer_runner = Tokenization(cfg)
-        tokenizer_runner.tokenize_dataset()
+        tokenize_dataset(cfg)
 
     # Ensure packed datasets exist; if not (or if do_packing True), run packing
     pk_dir = packed_dir(cfg)
@@ -48,12 +47,12 @@ def build_loaders(cfg):
             except Exception:
                 pass
 
-    train = load_from_disk(f"{pk_dir}/train").with_format("torch", columns=["input_ids", "labels"])
+    train = load_from_disk(f"{pk_dir}/train").with_format("torch", columns=["input_ids"])
     train_loader = DataLoader(train, batch_size=cfg.batch_size, shuffle=True, drop_last=True)
 
     val_loader = None
     try:
-        val = load_from_disk(f"{pk_dir}/val").with_format("torch", columns=["input_ids", "labels"])
+        val = load_from_disk(f"{pk_dir}/val").with_format("torch", columns=["input_ids"])
         val_loader = DataLoader(val, batch_size=cfg.batch_size, shuffle=False, drop_last=False)
     except Exception:
         pass

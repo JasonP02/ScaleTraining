@@ -1,16 +1,28 @@
 from itertools import chain
 from datasets import load_from_disk
-from scaletraining.util.utils import write_metadata
+import hydra
+from omegaconf import DictConfig
+from scaletraining.util.utils import write_metadata, tokenized_dir, packed_dir, _cfg_subset
 
 def group_texts(examples, block_size: int):
-    # 1) concatenate within this map batch
+    '''
+    Group tokenized ids into fixed-size blocks for causal LM training.
+    Steps:
+      1. Flatten the batch of examples into one long sequence.
+      2. Trim remainder so only full blocks are emitted.
+      3. Return list of blocks as 'input_ids' only (labels computed during training).
+    Args:
+      examples: dict with key 'input_ids' -> list[list[int]].
+      block_size: int maximum sequence length per block.
+    Returns:
+      dict with 'input_ids': list[list[int]] of length block_size.
+    '''
     concatenated = list(chain.from_iterable(examples["input_ids"]))
-    # 2) drop remainder so we only emit full blocks
     total_length = (len(concatenated) // block_size) * block_size
     if total_length == 0:
-        return {"input_ids": [], "labels": []}
+        return {"input_ids": []}
     blocks = [concatenated[i:i+block_size] for i in range(0, total_length, block_size)]
-    return {"input_ids": blocks, "labels": [b[:] for b in blocks]}  # causal LM: labels==inputs
+    return {"input_ids": blocks}
 
 def pack_and_save(
     tokenized_path: str,
@@ -49,9 +61,28 @@ def pack_and_save(
             desc="Packing val",
         )
         packed_val.save_to_disk(f"{packed_path}/val")
-    except Exception:
-        pass  # no val split
+    except Exception as e:
+        print(f"There is not validation split for packing: {e}")
 
     # Save metadata for compatibility checks
     if metadata is not None:
         write_metadata(packed_path, metadata)
+
+
+@hydra.main(version_base=None, config_path='../../../conf', config_name='config')
+def main(cfg: DictConfig) -> None:
+    """Hydra console script entrypoint for dataset packing.
+
+    Uses tokenized_dir(cfg) as input and writes packed blocks to packed_dir(cfg).
+    """
+    tok_dir = tokenized_dir(cfg)
+    pk_dir = packed_dir(cfg)
+    pack_and_save(
+        tokenized_path=tok_dir,
+        packed_path=pk_dir,
+        block_size=int(cfg.max_seq_len),
+        num_proc=int(cfg.pack_num_proc),
+        map_batch_size=int(cfg.pack_map_batch_size),
+        writer_batch_size=int(cfg.pack_writer_batch_size),
+        metadata={"config": _cfg_subset(cfg)},
+    )

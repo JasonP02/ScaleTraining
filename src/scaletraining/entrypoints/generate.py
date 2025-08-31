@@ -6,6 +6,7 @@ Usage:
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 import hydra
@@ -18,7 +19,7 @@ from scaletraining.util.utils import resolve_device
 from scaletraining.inference.generation import generate_autoregressive
 
 
-@hydra.main(version_base=None, config_path="../../../conf", config_name="config")
+@hydra.main(version_base=None, config_path=str(Path(__file__).parent.parent.parent.parent / "conf"), config_name="config")
 def main(cfg: DictConfig) -> None:
     """
     Generate text from a saved model.

@@ -46,8 +46,42 @@ def build_optimizers(cfg, matrix_params: List[nn.Parameter], other_params: List[
         other_params: list of non‑2D parameters.
     Returns:
         (primary_optimizer, secondary_optimizer) torch.optim.Optimizer instances.
+        Secondary optimizer is None when using baseline Adam or AdamW.
     """
+    if getattr(cfg, 'use_baseline_adam', False):
+        # Use single Adam optimizer for all parameters
+        all_params = list(matrix_params) + list(other_params)
+        baseline_cfg = getattr(cfg, 'baseline_adam_config', {})
+        lr = baseline_cfg.get('lr', cfg.lr)
+        weight_decay = baseline_cfg.get('weight_decay', cfg.weight_decay)
+        betas = baseline_cfg.get('betas', (cfg.beta, cfg.beta2))
+        
+        optimizer = torch.optim.AdamW(
+            params=all_params, 
+            lr=lr, 
+            weight_decay=weight_decay, 
+            betas=betas,
+            eps=cfg.eps
+        )
+        return optimizer, None  # No secondary optimizer needed
+    
+    # Check if using AdamW as primary optimizer
     name = getattr(cfg, 'primary_optimizer', 'adamuon').lower()
+    if name == 'adamw':
+        # Use single AdamW optimizer for all parameters (like baseline Adam)
+        all_params = list(matrix_params) + list(other_params)
+        betas = (cfg.beta, cfg.beta2)
+        
+        optimizer = torch.optim.AdamW(
+            params=all_params, 
+            lr=cfg.lr, 
+            betas=betas,
+            weight_decay=cfg.weight_decay, 
+            eps=cfg.eps
+        )
+        return optimizer, None  # No secondary optimizer needed
+    
+    # Custom optimizers (adamuon/muon) - use parameter splitting
     betas = (cfg.beta, cfg.beta2)
     if name == 'muon':
         primary = Muon(params=matrix_params, lr=cfg.lr, beta=betas[0], beta2=betas[1],
@@ -55,9 +89,6 @@ def build_optimizers(cfg, matrix_params: List[nn.Parameter], other_params: List[
     elif name == 'adamuon':
         primary = AdaMuon(params=matrix_params, lr=cfg.lr, beta=betas[0], beta2=betas[1],
                           weight_decay=cfg.weight_decay, ns_iters=cfg.ns_iters, eps=cfg.eps)
-    elif name == 'adamw':
-        primary = torch.optim.AdamW(params=matrix_params, lr=cfg.lr, betas=betas,
-                                    weight_decay=cfg.weight_decay, eps=cfg.eps)
     else:
         raise NotImplementedError(f"Unsupported optimizer: {cfg.primary_optimizer}")
 
@@ -173,12 +204,18 @@ def training_run(cfg, model, train_loader: DataLoader, *, loss_fn: nn.Module) ->
 
             if step_in_accum == cfg.accum_steps:
                 nn.utils.clip_grad_norm_(model.parameters(), max_norm=cfg.grad_clip_norm)
-                opt_primary.step(); opt_secondary.step()
-                opt_primary.zero_grad(set_to_none=True); opt_secondary.zero_grad(set_to_none=True)
+                opt_primary.step()
+                if opt_secondary is not None:
+                    opt_secondary.step()
+                
+                opt_primary.zero_grad(set_to_none=True)
+                if opt_secondary is not None:
+                    opt_secondary.zero_grad(set_to_none=True)
                 step_in_accum = 0
 
                 avg_loss = accum_loss_sum / max(1, accum_token_count)
                 stats['train_loss'].append(avg_loss)
+                print(f"Tokens: {used_tokens:,}, Loss: {avg_loss:.4f}")
                 try:
                     wandb.log({'used tokens': used_tokens, 'train_per_token_loss': avg_loss}, step=used_tokens)
                 except Exception:
