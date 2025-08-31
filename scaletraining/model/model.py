@@ -134,15 +134,20 @@ class TransformerNetwork(nn.Module):
         self.ln = nn.LayerNorm(cfg.n_embed)
         self.use_checkpoint = cfg.use_checkpoint
 
-    def forward(self, x):
+    def forward_hidden(self, x):
+        """
+        Returns pre-logits hidden states after LayerNorm, without projecting to vocab.
+        Shape: (B, T, E)
+        """
         x = self.token_embedding(x)
-
         for block in self.transformer_blocks:
             if self.training and self.use_checkpoint:
                 x = ckpt(block, x)
             else:
                 x = block(x)
-
         x = self.ln(x)
-        x = self.W_ue(x)
         return x
+
+    def forward(self, x):
+        hidden = self.forward_hidden(x)
+        return self.W_ue(hidden)
