@@ -20,12 +20,12 @@ class AttentionBlock(nn.Module):
         self.head_dim = cfg.n_embed // cfg.n_head
         self.max_seq_len = cfg.max_seq_len
 
-        # RoPE configuration
-        self.use_rope = getattr(cfg, 'use_rope', True)
+        # RoPE configuration: one switch via rope_implementation
+        # Allowed values: 'custom' | 'torch_builtin' | 'none'
         self.rope_implementation = getattr(cfg, 'rope_implementation', 'custom')
         self.theta = getattr(cfg, 'rope_config', {}).get('theta', 10000)
         
-        if self.use_rope and self.rope_implementation == 'custom':
+        if self.rope_implementation == 'custom':
             assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE, but got %d" % self.head_dim
             self.create_rope_lookup()
 
@@ -136,12 +136,11 @@ class AttentionBlock(nn.Module):
         v = v.view(B, T, self.n_head, E // self.n_head).transpose(1,2) # (B, nh, T, hs)
 
         # Apply RoPE based on configuration
-        if self.use_rope:
-            if self.rope_implementation == 'torch_builtin':
-                q, k = self._apply_rope_torch_builtin(q, k)
-            elif self.rope_implementation == 'custom':
-                q, k = self._apply_rope_custom(q, k)
-            # else: no RoPE applied
+        if self.rope_implementation == 'torch_builtin':
+            q, k = self._apply_rope_torch_builtin(q, k)
+        elif self.rope_implementation == 'custom':
+            q, k = self._apply_rope_custom(q, k)
+        # 'none': do not apply RoPE
 
         # SDPA takes in tensors, with dropout for attention scores
         y = torch.nn.functional.scaled_dot_product_attention(q,k,v,attn_mask=None, dropout_p=self.attn_dropout if self.training else 0, is_causal=True)
