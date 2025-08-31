@@ -1,14 +1,16 @@
-from dataclasses import dataclass
 from datasets import load_dataset
 from transformers import AutoTokenizer
 from typing import Tuple, Dict, Any, List, Optional
+import hydra
+from omegaconf import DictConfig
+from scaletraining.util.utils import tokenized_dir, write_metadata, _cfg_subset
 
 class Tokenization:
     def __init__(self, cfg):
         self.cfg = cfg
         self.tokenizer, self.eos_id = self._get_tokenizer_and_eos(cfg.tokenizer_name)
         self.max_length = cfg.max_seq_len
-        self.save_path = cfg.tokenized_path
+        self.save_path = tokenized_dir(cfg)
         self.use_attention_mask = cfg.use_attention_mask
 
         try:
@@ -83,3 +85,30 @@ class Tokenization:
         tokenized_train.save_to_disk(f"{self.save_path}/train")
         if tokenized_val is not None:
             tokenized_val.save_to_disk(f"{self.save_path}/val")
+
+        # Save metadata for compatibility checks
+        write_metadata(self.save_path, {
+            "config": _cfg_subset(self.cfg),
+            "tokenizer_name": self.cfg.tokenizer_name,
+            "eos_token_id": self.eos_id,
+            "tokenizer_vocab_size": self.tokenizer.vocab_size,
+        })
+
+
+@hydra.main(version_base=None, config_path='../../../conf', config_name='config')
+def _hydra_tokenize(cfg: DictConfig) -> None:
+    """Hydra CLI entrypoint for tokenization.
+
+    Args:
+        cfg: Hydra DictConfig with dataset/tokenizer fields.
+    """
+    runner = Tokenization(cfg)
+    runner.tokenize_dataset()
+
+
+def main() -> None:
+    """Console script entrypoint for tokenization using Hydra config.
+
+    This wraps the Hydra-decorated function to allow `scaletraining-tokenize` to run.
+    """
+    _hydra_tokenize()
