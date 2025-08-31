@@ -1,0 +1,67 @@
+hydra:
+  run:
+    dir: .
+
+# Minimal Hydra config mirroring the previous dataclass defaults.
+
+# Device and batch
+device: auto            # 'auto'|'cuda'|'cpu'
+batch_size: 16
+accum_steps: 4
+
+# Model sizes
+vocab_size: 50257       # will be auto-set from tokenizer metadata if available
+n_layer: 2
+max_seq_len: 1000
+n_head: 8
+n_embed: 256
+n_hidden: 1024          # 256*4
+bias: true
+UE_bias: false
+attn_dropout: 0.2
+resid_dropout: 0.2
+use_checkpoint: true
+
+# Training
+grad_clip_norm: 1.0
+max_train_tokens: 100000000
+max_val_tokens: 1000000000
+logits_chunk_size: 256
+
+# Optimizer
+lr: 1e-4
+beta: 0.9
+beta2: 0.999
+weight_decay: 0.0
+ns_iters: 5
+eps: 1e-8
+primary_optimizer: adamuon   # one of: adamuon|muon|adamw
+
+# Data
+tokenized_path: datasets/tokenized_base
+batched_tokenized_path: datasets/tokenized_batched
+use_attention_mask: false
+hf_dataset_names: roneneldan/TinyStories
+do_packing: false
+pack_num_proc: 8
+pack_map_batch_size: 400
+pack_writer_batch_size: 4000
+num_proc: 8
+dataset_tag: ""
+strict_dataset_compat: true
+
+# Tokenizer
+tokenizer_name: EleutherAI/gpt-neo-125M
+tokenizer_type: hf
+
+# Logging / Outputs
+wandb_project_name: tiny-stories-base
+output_dir: outputs
+debug_memory: true
+
+# Generation defaults (used by scaletraining-generate, can override via CLI)
+prompt: "Once upon a time"
+generation_max_tokens: 100
+generation_temperature: 1.0
+generation_top_k: 50
+generate_after_train: false
