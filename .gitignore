@@ -1,12 +1,23 @@
+# Data and model files
 datasets/
-notes/
-src/scaletraining/wandb
 *.pt
 *.pth
 *.pkl
-*.pt
-*.pth
-*.pkl
+*.ckpt
+*.bin
+*.h5
+*.npz
+
+# Logs and outputs
+*.log
+train.log
+wandb/
+lightning_logs/
+checkpoints/
+outputs/
+.hydra/
+
+# Development and cache files
 __pycache__/
 *.pyc
 *.pyo
@@ -14,6 +25,17 @@ __pycache__/
 *.so
 *.dylib
 *.dll
-*.egg-info/
-wandb/
-src/**/__pycache__/
+.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Temporary files
+temp/
+*.tmp
+*.temp
+
+# Notes and documentation
+notes/
