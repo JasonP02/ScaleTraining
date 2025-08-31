@@ -8,6 +8,10 @@ version = "0.1.0"
 description = "Training platform for language models"
 readme = "README.md"
 requires-python = ">=3.10"
+dependencies = [
+  "hydra-core>=1.3",
+  "omegaconf>=2.3",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -19,3 +23,5 @@ exclude = ["datasets*", "notes*", "notebooks*", "wandb*"]
 
 [project.scripts]
 scaletraining-tokenize = "scaletraining.data_processing.tokenization:main"
+scaletraining-train = "scaletraining.entrypoints.train:main"
+scaletraining-generate = "scaletraining.entrypoints.generate:main"
