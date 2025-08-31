@@ -48,9 +48,16 @@ class Config():
     wandb_project_name: str = 'tiny-stories-base'
     hf_dataset_names: str = 'roneneldan/TinyStories'
     do_packing: bool = False
+    num_proc: int = 4
     pack_num_proc: int = 8
     pack_map_batch_size: int = 400
     pack_writer_batch_size = 4000
+
+    # Tokenization workers (used in tokenization.py)
+    num_proc: int = 8
+
+    # Optimizer selection for functional trainer
+    primary_optimizer: str = 'adamuon'  # one of: 'adamuon', 'muon', 'adamw'
 
     tokenizer_name: str = 'EleutherAI/gpt-neo-125M'
     tokenizer_type: str = 'hf'
