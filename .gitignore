@@ -18,3 +18,5 @@ wandb/
 
 # Logs
 *.log
+
+datasets/
