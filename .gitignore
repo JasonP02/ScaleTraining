@@ -1,42 +1,20 @@
-# Data and model files
-datasets/
-*.pt
-*.pth
-*.pkl
-*.ckpt
-*.bin
-*.h5
-*.npz
-
-AGENTS.md
-# Logs and outputs
-*.log
-train.log
-wandb/
-lightning_logs/
-checkpoints/
-outputs/
-.hydra/
-
-# Development and cache files
+# Byte-compiled / cache
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.so
-*.dylib
-*.dll
-.egg-info/
-.pytest_cache/
-.coverage
-htmlcov/
-.mypy_cache/
-.ipynb_checkpoints/
+*.py[cod]
 
-# Temporary files
-temp/
-*.tmp
-*.temp
+# OS
+.DS_Store
 
-# Notes and documentation
-notes/
+# Hydra outputs
+.hydra/
+runs/
+multirun/
+
+# Training outputs
+outputs/
+
+# W&B runs (any level)
+wandb/
+
+# Logs
+*.log

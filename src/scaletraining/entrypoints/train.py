@@ -6,9 +6,8 @@ Run from CLI: `python -m scaletraining.entrypoints.train` or via console script.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Any
+ 
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -29,6 +28,8 @@ from scaletraining.util.utils import (
 from scaletraining.training.loop import training_run
 from scaletraining.inference.generation import generate_autoregressive
 from transformers import AutoTokenizer
+import json
+import wandb
 
 
 @hydra.main(version_base=None, config_path=str(Path(__file__).parent.parent.parent.parent / "conf"), config_name="config")
@@ -40,28 +41,6 @@ def main(cfg: DictConfig) -> float:
         cfg: Hydra DictConfig with fields matching the previous Config dataclass.
              Access via attribute syntax, e.g., cfg.batch_size. See conf/config.yaml.
     """
-    # Handle W&B sweep initialization
-    # Detect either via explicit config (wandb_sweep: true) or agent environment variables
-    sweep_env = bool(os.environ.get("WANDB_SWEEP_ID") or os.environ.get("WANDB_AGENT"))
-    if bool(getattr(cfg, 'wandb_sweep', False)) or sweep_env:
-        import wandb
-        # Ensure a run exists so wandb.config is populated by the agent
-        if getattr(wandb, "run", None) is None:
-            wandb.init()
-        # Update Hydra cfg with sweep parameters (if provided by the sweep)
-        sweep_config = wandb.config
-        try:
-            if hasattr(sweep_config, "primary_optimizer"):
-                cfg.primary_optimizer = getattr(sweep_config, "primary_optimizer")
-        except Exception:
-            pass
-        try:
-            if hasattr(sweep_config, "rope_implementation"):
-                cfg.rope_implementation = getattr(sweep_config, "rope_implementation")
-        except Exception:
-            pass
-        # Deprecated: use single rope_implementation = custom|torch_builtin|none
-    
     # Resolve device, configure kernels, and free any stale CUDA cache
     resolve_device(cfg)
     configure_rocm_and_sdp(cfg)
@@ -117,6 +96,27 @@ def main(cfg: DictConfig) -> float:
     except Exception as e:
         print(f"Post-train generation skipped: {e}")
 
+    # Persist a lightweight result.json in the job directory for easy aggregation
+    try:
+        job_result = {
+            "final_train_loss": float(stats['train_loss'][-1]) if stats.get('train_loss') else None,
+            "primary_optimizer": getattr(cfg, 'primary_optimizer', None),
+            "rope_implementation": getattr(cfg, 'rope_implementation', None),
+            "lr": float(getattr(cfg, 'lr', 0.0)),
+            "batch_size": int(getattr(cfg, 'batch_size', 0)),
+            "accum_steps": int(getattr(cfg, 'accum_steps', 0)),
+            "max_seq_len": int(getattr(cfg, 'max_seq_len', 0)),
+            "n_layer": int(getattr(cfg, 'n_layer', 0)),
+            "n_head": int(getattr(cfg, 'n_head', 0)),
+            "n_embed": int(getattr(cfg, 'n_embed', 0)),
+        }
+        with open(Path.cwd() / "result.json", "w", encoding="utf-8") as f:
+            json.dump(job_result, f, indent=2, sort_keys=True)
+        # Also print a single-line summary that's easy to grep
+        print("RESULT:", json.dumps(job_result))
+    except Exception as e:
+        print(f"Result write skipped: {e}")
+
     # Return an objective for Hydra sweepers (e.g., Optuna)
     try:
         if stats.get('train_loss'):
@@ -127,4 +127,10 @@ def main(cfg: DictConfig) -> float:
 
 if __name__ == "__main__":
     # Standard Hydra entrypoint; objective value returned for sweepers
-    main()
+    try:
+        main()
+    finally:
+        try:
+            wandb.finish()
+        except Exception:
+            pass
