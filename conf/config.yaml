@@ -35,18 +35,24 @@ rope_config:            # RoPE-specific configuration
 
 # Training
 grad_clip_norm: 1.0
-max_train_tokens: 25000000
+max_train_tokens: 100000000
 max_val_tokens: 1000000000
 logits_chunk_size: 256
 
 # Optimizer
 lr: 1e-4
+muon_lr: 0.02            # Recommended Muon LR (~spectral norm units)
 beta: 0.9
 beta2: 0.999
 weight_decay: 0.0
 ns_iters: 5
 eps: 1e-8
 primary_optimizer: adamw   # one of: adamuon|muon|adamw
+
+# LR scheduling
+lr_schedule: cosine         # one of: none|cosine|linear
+warmup_tokens: 1000000          # number of tokens for linear warmup
+min_lr_scale: 0.1         # final LR scale at end of schedule (for cosine/linear)
 use_baseline_adam: false      # if true, use single Adam optimizer for all params
 baseline_adam_config:         # config for baseline Adam (when use_baseline_adam=true)
   lr: 1e-4                    # can be different from main lr

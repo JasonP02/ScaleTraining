@@ -7,7 +7,7 @@ Run from CLI: `python -m scaletraining.entrypoints.train` or via console script.
 from __future__ import annotations
 
 from pathlib import Path
- 
+import json
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -17,19 +17,13 @@ from scaletraining.data_processing import build_loaders
 from scaletraining.model import TransformerNetwork
 from scaletraining.util import configure_rocm_and_sdp, clear_cuda_cache
 from scaletraining.util.utils import (
-    tokenized_dir,
-    packed_dir,
     init_wandb,
-    log_dataset_artifacts,
     save_model,
-    log_model_artifact,
     resolve_device,
 )
 from scaletraining.training.loop import training_run
 from scaletraining.inference.generation import generate_autoregressive
 from transformers import AutoTokenizer
-import json
-import wandb
 
 
 @hydra.main(version_base=None, config_path=str(Path(__file__).parent.parent.parent.parent / "conf"), config_name="config")
@@ -52,8 +46,7 @@ def main(cfg: DictConfig) -> float:
     # Build data
     train_loader, val_loader = build_loaders(cfg)
 
-    # Skip dataset artifact logging
-    print("Dataset artifact logging disabled")
+    # Dataset artifact logging intentionally disabled.
 
     # Model + loss
     model = TransformerNetwork(cfg)
@@ -68,69 +61,50 @@ def main(cfg: DictConfig) -> float:
     stats = training_run(cfg, model, train_loader, loss_fn=loss_fn)
 
     # Save model locally only
-    try:
-        run_dir = save_model(model, cfg, getattr(cfg, "output_dir", "outputs"))
-        print(f"Model saved locally to: {run_dir}")
-    except Exception as e:
-        print(f"Model save skipped: {e}")
+    run_dir = save_model(model, cfg, cfg.output_dir)
+    print(f"Model saved locally to: {run_dir}")
 
     # Optional: sample generation after training for quick qualitative check
-    try:
-        if bool(getattr(cfg, 'generate_after_train', False)):
+    if cfg.generate_after_train:
+        try:
             tok = AutoTokenizer.from_pretrained(cfg.tokenizer_name, use_fast=True)
             text = generate_autoregressive(
                 model,
                 tok,
                 cfg.device,
-                prompt=getattr(cfg, 'prompt', 'Once upon a time'),
-                max_new_tokens=int(getattr(cfg, 'generation_max_tokens', 100)),
-                temperature=float(getattr(cfg, 'generation_temperature', 1.0)),
-                top_k=int(getattr(cfg, 'generation_top_k', 50)),
+                prompt=cfg.prompt,
+                max_new_tokens=int(cfg.generation_max_tokens),
+                temperature=float(cfg.generation_temperature),
+                top_k=int(cfg.generation_top_k),
             )
             print("\n=== Generated Sample (post-train) ===\n" + text + "\n====================================\n")
-            try:
-                import wandb
-                wandb.log({"generated_sample": text})
-            except Exception:
-                pass
-    except Exception as e:
-        print(f"Post-train generation skipped: {e}")
+        except Exception as e:
+            print(f"Post-train generation skipped: {e}")
 
     # Persist a lightweight result.json in the job directory for easy aggregation
-    try:
-        job_result = {
-            "final_train_loss": float(stats['train_loss'][-1]) if stats.get('train_loss') else None,
-            "primary_optimizer": getattr(cfg, 'primary_optimizer', None),
-            "rope_implementation": getattr(cfg, 'rope_implementation', None),
-            "lr": float(getattr(cfg, 'lr', 0.0)),
-            "batch_size": int(getattr(cfg, 'batch_size', 0)),
-            "accum_steps": int(getattr(cfg, 'accum_steps', 0)),
-            "max_seq_len": int(getattr(cfg, 'max_seq_len', 0)),
-            "n_layer": int(getattr(cfg, 'n_layer', 0)),
-            "n_head": int(getattr(cfg, 'n_head', 0)),
-            "n_embed": int(getattr(cfg, 'n_embed', 0)),
-        }
-        with open(Path.cwd() / "result.json", "w", encoding="utf-8") as f:
-            json.dump(job_result, f, indent=2, sort_keys=True)
-        # Also print a single-line summary that's easy to grep
-        print("RESULT:", json.dumps(job_result))
-    except Exception as e:
-        print(f"Result write skipped: {e}")
+    job_result = {
+        "final_train_loss": float(stats['train_loss'][-1]) if stats.get('train_loss') else None,
+        "primary_optimizer": cfg.primary_optimizer,
+        "rope_implementation": cfg.rope_implementation,
+        "lr": float(cfg.lr),
+        "batch_size": int(cfg.batch_size),
+        "accum_steps": int(cfg.accum_steps),
+        "max_seq_len": int(cfg.max_seq_len),
+        "n_layer": int(cfg.n_layer),
+        "n_head": int(cfg.n_head),
+        "n_embed": int(cfg.n_embed),
+    }
+    with open(Path.cwd() / "result.json", "w", encoding="utf-8") as f:
+        json.dump(job_result, f, indent=2, sort_keys=True)
+    # Also print a single-line summary that's easy to grep
+    print("RESULT:", json.dumps(job_result))
 
     # Return an objective for Hydra sweepers (e.g., Optuna)
-    try:
-        if stats.get('train_loss'):
-            return float(stats['train_loss'][-1])
-    except Exception:
-        pass
+    if stats.get('train_loss'):
+        return float(stats['train_loss'][-1])
     return float('inf')
 
 if __name__ == "__main__":
     # Standard Hydra entrypoint; objective value returned for sweepers
-    try:
-        main()
-    finally:
-        try:
-            wandb.finish()
-        except Exception:
-            pass
+    main()
+

@@ -20,12 +20,11 @@ class AttentionBlock(nn.Module):
         self.head_dim = cfg.n_embed // cfg.n_head
         self.max_seq_len = cfg.max_seq_len
 
-        # RoPE configuration: one switch via rope_implementation
-        # Allowed values: 'custom' | 'torch_builtin' | 'none'
-        self.rope_implementation = getattr(cfg, 'rope_implementation', 'custom')
-        self.theta = getattr(cfg, 'rope_config', {}).get('theta', 10000)
-        
-        if self.rope_implementation == 'custom':
+        # RoPE configuration (custom | torch_builtin | none)
+        self.rope_implementation = cfg.rope_implementation
+        self.theta = cfg.rope_config.get('theta', 10000)
+
+        if self.rope_implementation != 'none':
             assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE, but got %d" % self.head_dim
             self.create_rope_lookup()
 
@@ -43,83 +42,34 @@ class AttentionBlock(nn.Module):
         self.register_buffer('cos_freqs', torch.cos(frequencies), persistent=False)
         self.register_buffer('sin_freqs', torch.sin(frequencies), persistent=False)
 
-    def _apply_rope_custom(self, q, k):
-        """Current RoPE implementation extracted to separate method"""
+    def _apply_rope(self, q, k, cos_freqs, sin_freqs):
+        """Apply RoPE given precomputed cos/sin lookup tables."""
         B, N, T, H = q.shape
+        cos = cos_freqs[:T, :].unsqueeze(0).unsqueeze(0).to(device=q.device, dtype=q.dtype)
+        sin = sin_freqs[:T, :].unsqueeze(0).unsqueeze(0).to(device=q.device, dtype=q.dtype)
 
-        # Paper math:
-        # For a 2x2 block 
-        # [cosm, -sinm]
-        # [sinm, cosm]
-        cos_freqs = self.cos_freqs[:T,:].unsqueeze(0).unsqueeze(0).to(device=q.device, dtype=q.dtype)
-        sin_freqs = self.sin_freqs[:T,:].unsqueeze(0).unsqueeze(0).to(device=q.device, dtype=q.dtype)
+        q_even, q_odd = q[..., ::2], q[..., 1::2]
+        k_even, k_odd = k[..., ::2], k[..., 1::2]
 
-        # We do: 
-        # [cosm * q1 - sinm * q2]
-        # [sinm * q1 + cosm * q2]
+        q_rot_even = q_even * cos - q_odd * sin
+        q_rot_odd = q_even * sin + q_odd * cos
 
-        # Next step: determine how to split q into q1 and q2... I think we use .viewa
-        q_even = q[...,::2]
-        q_odd = q[...,1::2]
-        k_even = k[...,::2]
-        k_odd = k[...,1::2]
+        k_rot_even = k_even * cos - k_odd * sin
+        k_rot_odd = k_even * sin + k_odd * cos
 
-        # Now, we just perform the operations for each
-        # Remember that frequencies are shape (T, freq_resolution)
-        q_rot_even = q_even * cos_freqs - q_odd * sin_freqs
-        q_rot_odd = q_even * sin_freqs + q_odd * cos_freqs
-
-        k_rot_even = k_even * cos_freqs - k_odd * sin_freqs
-        k_rot_odd = k_even * sin_freqs + k_odd * cos_freqs
-
-        q_rot = torch.stack([q_rot_even, q_rot_odd], dim=-1).reshape(B,N,T,H).to(device=q.device, dtype=q.dtype)
-        k_rot = torch.stack([k_rot_even, k_rot_odd], dim=-1).reshape(B,N,T,H).to(device=k.device, dtype=k.dtype)
-
+        q_rot = torch.stack([q_rot_even, q_rot_odd], dim=-1).reshape(B, N, T, H).to(device=q.device, dtype=q.dtype)
+        k_rot = torch.stack([k_rot_even, k_rot_odd], dim=-1).reshape(B, N, T, H).to(device=k.device, dtype=k.dtype)
         return q_rot, k_rot
 
     def _apply_rope_torch_builtin(self, q, k):
-        """Use PyTorch's built-in RoPE implementation"""
-        try:
-            # PyTorch 2.3.0+ built-in RoPE
-            freqs = torch.outer(
-                torch.arange(self.max_seq_len, device=q.device),
-                1.0 / (self.theta ** (torch.arange(0, self.head_dim, 2, device=q.device).float() / self.head_dim))
-            )
-            cos_freqs = torch.cos(freqs)
-            sin_freqs = torch.sin(freqs)
-            
-            # Use built-in function if available
-            if hasattr(torch.nn.functional, 'rotary_position_embedding'):
-                return torch.nn.functional.rotary_position_embedding(q, k, cos_freqs, sin_freqs)
-            else:
-                # Fallback to manual application
-                return self._apply_rope_manual(q, k, cos_freqs, sin_freqs)
-        except Exception:
-            # Fallback to custom implementation
-            return self._apply_rope_custom(q, k)
-
-    def _apply_rope_manual(self, q, k, cos_freqs, sin_freqs):
-        """Manual RoPE application using provided frequencies"""
-        B, N, T, H = q.shape
-        
-        cos_freqs = cos_freqs[:T].unsqueeze(0).unsqueeze(0).to(device=q.device, dtype=q.dtype)
-        sin_freqs = sin_freqs[:T].unsqueeze(0).unsqueeze(0).to(device=q.device, dtype=q.dtype)
-        
-        q_even = q[...,::2]
-        q_odd = q[...,1::2]
-        k_even = k[...,::2]
-        k_odd = k[...,1::2]
-        
-        q_rot_even = q_even * cos_freqs - q_odd * sin_freqs
-        q_rot_odd = q_even * sin_freqs + q_odd * cos_freqs
-        
-        k_rot_even = k_even * cos_freqs - k_odd * sin_freqs
-        k_rot_odd = k_even * sin_freqs + k_odd * cos_freqs
-        
-        q_rot = torch.stack([q_rot_even, q_rot_odd], dim=-1).reshape(B,N,T,H).to(device=q.device, dtype=q.dtype)
-        k_rot = torch.stack([k_rot_even, k_rot_odd], dim=-1).reshape(B,N,T,H).to(device=k.device, dtype=k.dtype)
-        
-        return q_rot, k_rot
+        """Prefer PyTorch built-in RoPE; fallback to local implementation."""
+        if hasattr(torch.nn.functional, 'rotary_position_embedding'):
+            T = q.size(2)
+            cos = self.cos_freqs[:T, :].to(device=q.device, dtype=q.dtype)
+            sin = self.sin_freqs[:T, :].to(device=q.device, dtype=q.dtype)
+            return torch.nn.functional.rotary_position_embedding(q, k, cos, sin)
+        # Fallback
+        return self._apply_rope(q, k, self.cos_freqs, self.sin_freqs)
 
         
     def forward(self, x):
@@ -139,7 +89,7 @@ class AttentionBlock(nn.Module):
         if self.rope_implementation == 'torch_builtin':
             q, k = self._apply_rope_torch_builtin(q, k)
         elif self.rope_implementation == 'custom':
-            q, k = self._apply_rope_custom(q, k)
+            q, k = self._apply_rope(q, k, self.cos_freqs, self.sin_freqs)
         # 'none': do not apply RoPE
 
         # SDPA takes in tensors, with dropout for attention scores
