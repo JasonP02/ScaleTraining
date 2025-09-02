@@ -39,10 +39,10 @@ def main(cfg: DictConfig) -> None:
     if not model_path:
         raise RuntimeError("Provide model_path=/path/to/model.pt in CLI overrides.")
 
-    prompt: str = getattr(cfg, "prompt", "Once upon a time")
-    max_new_tokens: int = int(getattr(cfg, "generation_max_tokens", 100))
-    temperature: float = float(getattr(cfg, "generation_temperature", 1.0))
-    top_k: Optional[int] = getattr(cfg, "generation_top_k", 50)
+    prompt: str = cfg.prompt
+    max_new_tokens: int = int(cfg.generation_max_tokens)
+    temperature: float = float(cfg.generation_temperature)
+    top_k: Optional[int] = cfg.generation_top_k
     if isinstance(top_k, str):
         top_k = int(top_k) if top_k.isdigit() else None
 
@@ -68,3 +68,4 @@ def main(cfg: DictConfig) -> None:
 
 if __name__ == "__main__":
     main()
+

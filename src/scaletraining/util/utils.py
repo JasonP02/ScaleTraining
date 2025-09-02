@@ -14,27 +14,18 @@ def clear_cuda_cache():
 
 def configure_rocm_and_sdp(cfg):
     os.environ.setdefault("PYTORCH_HIP_ALLOC_CONF", "expandable_segments:True")
-    try:
-        if hasattr(cfg, 'use_flash_sdp'):
-            torch.backends.cuda.enable_flash_sdp(bool(getattr(cfg, 'use_flash_sdp')))
-        if hasattr(cfg, 'use_mem_efficient_sdp'):
-            torch.backends.cuda.enable_mem_efficient_sdp(bool(getattr(cfg, 'use_mem_efficient_sdp')))
-        if hasattr(cfg, 'use_math_sdp'):
-            torch.backends.cuda.enable_math_sdp(bool(getattr(cfg, 'use_math_sdp')))
-    except Exception as e:
-        print(f"SDP backend config skipped: {e}")
+    # Optional SDP toggles; only apply when present in config
+    if hasattr(cfg, 'use_flash_sdp'):
+        torch.backends.cuda.enable_flash_sdp(bool(cfg.use_flash_sdp))
+    if hasattr(cfg, 'use_mem_efficient_sdp'):
+        torch.backends.cuda.enable_mem_efficient_sdp(bool(cfg.use_mem_efficient_sdp))
+    if hasattr(cfg, 'use_math_sdp'):
+        torch.backends.cuda.enable_math_sdp(bool(cfg.use_math_sdp))
 
 def resolve_device(cfg) -> None:
-    """Resolve cfg.device when set to 'auto'.
-
-    Sets cfg.device to 'cuda' if a CUDA device is available, else 'cpu'.
-    """
-    try:
-        if getattr(cfg, 'device', 'auto') == 'auto':
-            import torch
-            cfg.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    except Exception:
-        cfg.device = 'cpu'
+    """Resolve cfg.device when set to 'auto'."""
+    if cfg.device == 'auto':
+        cfg.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
 # ---- Dataset/versioning helpers ----
@@ -62,14 +53,14 @@ def _sanitize(s: str) -> str:
 def tokenized_dir(cfg) -> str:
     fp = config_fingerprint(cfg)[:8]
     base = cfg.tokenized_path
-    tag = f"tag={_sanitize(cfg.dataset_tag)}__" if getattr(cfg, 'dataset_tag', '') else ""
+    tag = f"tag={_sanitize(cfg.dataset_tag)}__" if cfg.dataset_tag else ""
     name = f"{tag}ds={_sanitize(cfg.hf_dataset_names)}__tok={_sanitize(cfg.tokenizer_name)}__L={cfg.max_seq_len}__mask={int(cfg.use_attention_mask)}__v={fp}"
     return os.path.join(base, name)
 
 def packed_dir(cfg) -> str:
     fp = config_fingerprint(cfg)[:8]
     base = cfg.batched_tokenized_path
-    tag = f"tag={_sanitize(cfg.dataset_tag)}__" if getattr(cfg, 'dataset_tag', '') else ""
+    tag = f"tag={_sanitize(cfg.dataset_tag)}__" if cfg.dataset_tag else ""
     name = f"{tag}ds={_sanitize(cfg.hf_dataset_names)}__tok={_sanitize(cfg.tokenizer_name)}__L={cfg.max_seq_len}__mask={int(cfg.use_attention_mask)}__v={fp}"
     return os.path.join(base, name)
 
@@ -96,7 +87,7 @@ def save_run_manifest(cfg, out_dir: str, extra: Optional[Dict[str, Any]] = None)
         "time": datetime.utcnow().isoformat() + "Z",
         "dataset": _cfg_subset(cfg),
         "optimizer": {
-            "primary": getattr(cfg, 'primary_optimizer', 'adamuon'),
+            "primary": cfg.primary_optimizer,
             "lr": cfg.lr,
             "beta": cfg.beta,
             "beta2": cfg.beta2,
@@ -121,16 +112,16 @@ def save_run_manifest(cfg, out_dir: str, extra: Optional[Dict[str, Any]] = None)
             "UE_bias": cfg.UE_bias,
             "use_checkpoint": cfg.use_checkpoint,
         },
-        "dataset_tag": getattr(cfg, 'dataset_tag', ''),
+        "dataset_tag": cfg.dataset_tag,
         "fingerprint": config_fingerprint(cfg),
     }
     
     # Add implementation details
     manifest['implementation'] = {
-        'optimizer': 'baseline_adam' if getattr(cfg, 'use_baseline_adam', False) else getattr(cfg, 'primary_optimizer', 'unknown'),
+        'optimizer': 'baseline_adam' if cfg.use_baseline_adam else cfg.primary_optimizer,
         'rope': {
-            'implementation': getattr(cfg, 'rope_implementation', 'custom'),
-            'theta': getattr(cfg, 'rope_config', {}).get('theta', 10000),
+            'implementation': cfg.rope_implementation,
+            'theta': cfg.rope_config.get('theta', 10000),
         }
     }
     if extra:
@@ -142,8 +133,8 @@ def save_run_manifest(cfg, out_dir: str, extra: Optional[Dict[str, Any]] = None)
 
 
 def save_model(model, cfg, out_root: Optional[str] = None) -> str:
-    out_root = out_root or getattr(cfg, 'output_dir', 'outputs')
-    tag = _sanitize(getattr(cfg, 'dataset_tag', ''))
+    out_root = out_root or cfg.output_dir
+    tag = _sanitize(cfg.dataset_tag)
     ts = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
     fp = config_fingerprint(cfg)[:8]
     run_dir_name = "__".join(filter(None, [tag, f"v={fp}", ts]))
@@ -152,14 +143,10 @@ def save_model(model, cfg, out_root: Optional[str] = None) -> str:
 
     # Save model weights
     model_path = os.path.join(run_dir, "model.pt")
-    try:
-        import torch
-        torch.save({
-            "state_dict": model.state_dict(),
-            "config": {k: getattr(cfg, k) for k in vars(cfg).keys()} if hasattr(cfg, "__dict__") else {},
-        }, model_path)
-    except Exception as e:
-        print(f"Warning: model save failed: {e}")
+    import torch
+    torch.save({
+        "state_dict": model.state_dict(),
+    }, model_path)
 
     # Save manifest
     save_run_manifest(cfg, run_dir)
@@ -169,67 +156,9 @@ def save_model(model, cfg, out_root: Optional[str] = None) -> str:
 # ---- W&B helpers ----
 
 def init_wandb(cfg: Any, config_dict: Optional[Dict[str, Any]] = None) -> None:
-    """Initialize W&B with consistent metrics.
-
-    Args:
-        cfg: Hydra config or simple object with attributes used below.
-        config_dict: Optional resolved config (Python dict) to store in W&B.
-    """
+    """Minimal W&B init to keep logs concise."""
     import wandb
-
-    # Log implementation details
-    if getattr(cfg, 'log_implementation_details', True):
-        impl_details = {
-            'optimizer': 'baseline_adam' if getattr(cfg, 'use_baseline_adam', False) else getattr(cfg, 'primary_optimizer', 'unknown'),
-            'rope_implementation': getattr(cfg, 'rope_implementation', 'custom'),
-        }
-        if config_dict is not None:
-            config_dict.update(impl_details)
-        else:
-            config_dict = impl_details
-
-    # Derive a useful group/name for Hydra multiruns so runs are grouped in the UI.
-    group: Optional[str] = None
-    name: Optional[str] = None
-    try:
-        cwd = Path.cwd()
-        if "multirun" in cwd.parts:
-            # multirun/YYYY-MM-DD/HH-MM-SS/<job_num>
-            parts = list(cwd.parts)
-            idx = parts.index("multirun")
-            if idx + 2 < len(parts):
-                group = f"hydra-{parts[idx+1]}-{parts[idx+2]}"  # date-time
-            # Optional descriptive name per job
-            po = getattr(cfg, 'primary_optimizer', None)
-            rope = getattr(cfg, 'rope_implementation', None)
-            name = f"job{parts[-1]}" + (f"__{po}" if po else "") + (f"__rope={rope}" if rope else "")
-    except Exception:
-        pass
-
-    # Start a fresh run per Hydra job to ensure separate configs in W&B.
-    # If a run exists (e.g., prior job in the same process), finish it first.
-    try:
-        if getattr(wandb, "run", None) is not None:
-            wandb.finish()
-    except Exception:
-        pass
-
-    kwargs: Dict[str, Any] = {
-        'project': getattr(cfg, 'wandb_project_name', 'scaletraining'),
-        'entity': os.environ.get('WANDB_ENTITY', None),
-        'config': config_dict,
-        'reinit': True,
-    }
-    if group:
-        kwargs['group'] = group
-    if name:
-        kwargs['name'] = name
-    wandb.init(**kwargs)
-    try:
-        wandb.define_metric("used tokens")
-        wandb.define_metric("train_per_token_loss", step_metric="used tokens")
-    except Exception:
-        pass
+    wandb.init(project=cfg.wandb_project_name, config=config_dict, reinit=True)
 
 
 def log_dataset_artifacts(tok_dir: str, pack_dir: str, cfg: Any) -> None:
