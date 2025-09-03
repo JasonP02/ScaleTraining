@@ -12,8 +12,8 @@ hydra:
 # Minimal Hydra config mirroring the previous dataclass defaults.
 
 # Device and batch
-device: auto            # 'auto'|'cuda'|'cpu'
-batch_size: 16
+device: cuda            # 'auto'|'cuda'|'cpu'
+batch_size: 32
 accum_steps: 4
 
 # Model sizes
@@ -90,8 +90,9 @@ log_dataset_artifacts: false
 log_model_artifacts: false
 
 # Generation defaults (used by scaletraining-generate, can override via CLI)
-prompt: "Once upon a time"
-generation_max_tokens: 100
+prompt: "There was a star ship in the sky and "
+model_path: "/home/j/Projects/ScaleTraining/outputs/v=004acfd1__20250902T234720Z/model.pt"
+generation_max_tokens: 1000
 generation_temperature: 1.0
 generation_top_k: 50
 generate_after_train: false

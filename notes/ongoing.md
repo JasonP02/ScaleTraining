@@ -1,5 +1,5 @@
 Working on:
-Debugging muon/adamuon
+Training a custom tokenizer
 
 Next task:
 Unsure...
