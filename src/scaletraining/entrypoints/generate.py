@@ -15,7 +15,7 @@ import torch
 from transformers import AutoTokenizer
 
 from scaletraining.model.model import TransformerNetwork
-from scaletraining.util.utils import resolve_device
+from scaletraining.util.utils import resolve_device, flatten_cfg
 from scaletraining.inference.generation import generate_autoregressive
 
 
@@ -33,31 +33,32 @@ def main(cfg: DictConfig) -> None:
       - generation_temperature: float, softmax temperature (>0)
       - generation_top_k: int, top-k filtering; set 0/None to disable
     """
-    resolve_device(cfg)
+    flat = flatten_cfg(cfg)
+    resolve_device(flat)
 
-    model_path = getattr(cfg, "model_path", None)
+    model_path = getattr(flat, "model_path", None)
     if not model_path:
         raise RuntimeError("Provide model_path=/path/to/model.pt in CLI overrides.")
 
-    prompt: str = cfg.prompt
-    max_new_tokens: int = int(cfg.generation_max_tokens)
-    temperature: float = float(cfg.generation_temperature)
-    top_k: Optional[int] = cfg.generation_top_k
+    prompt: str = flat.prompt
+    max_new_tokens: int = int(flat.generation_max_tokens)
+    temperature: float = float(flat.generation_temperature)
+    top_k: Optional[int] = flat.generation_top_k
     if isinstance(top_k, str):
         top_k = int(top_k) if top_k.isdigit() else None
 
     # Build model from config and load weights
-    model = TransformerNetwork(cfg).to(cfg.device)
-    ckpt = torch.load(model_path, map_location=cfg.device)
+    model = TransformerNetwork(flat).to(flat.device)
+    ckpt = torch.load(model_path, map_location=flat.device)
     state_dict = ckpt.get("state_dict", ckpt)
     model.load_state_dict(state_dict)
     model.eval()
 
-    tok = AutoTokenizer.from_pretrained(cfg.tokenizer_name, use_fast=True)
+    tok = AutoTokenizer.from_pretrained(flat.tokenizer_name, use_fast=True)
     text = generate_autoregressive(
         model,
         tok,
-        cfg.device,
+        flat.device,
         prompt=prompt,
         max_new_tokens=max_new_tokens,
         temperature=temperature,
@@ -68,4 +69,3 @@ def main(cfg: DictConfig) -> None:
 
 if __name__ == "__main__":
     main()
-

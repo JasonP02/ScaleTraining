@@ -24,7 +24,7 @@ def configure_rocm_and_sdp(cfg):
 
 def resolve_device(cfg) -> None:
     """Resolve cfg.device when set to 'auto'."""
-    if cfg.device == 'auto':
+    if getattr(cfg, 'device', None) == 'auto':
         cfg.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
@@ -53,14 +53,14 @@ def _sanitize(s: str) -> str:
 def tokenized_dir(cfg) -> str:
     fp = config_fingerprint(cfg)[:8]
     base = cfg.tokenized_path
-    tag = f"tag={_sanitize(cfg.dataset_tag)}__" if cfg.dataset_tag else ""
+    tag = f"tag={_sanitize(cfg.dataset_tag)}__" if getattr(cfg, 'dataset_tag', '') else ""
     name = f"{tag}ds={_sanitize(cfg.hf_dataset_names)}__tok={_sanitize(cfg.tokenizer_name)}__L={cfg.max_seq_len}__mask={int(cfg.use_attention_mask)}__v={fp}"
     return os.path.join(base, name)
 
 def packed_dir(cfg) -> str:
     fp = config_fingerprint(cfg)[:8]
     base = cfg.batched_tokenized_path
-    tag = f"tag={_sanitize(cfg.dataset_tag)}__" if cfg.dataset_tag else ""
+    tag = f"tag={_sanitize(cfg.dataset_tag)}__" if getattr(cfg, 'dataset_tag', '') else ""
     name = f"{tag}ds={_sanitize(cfg.hf_dataset_names)}__tok={_sanitize(cfg.tokenizer_name)}__L={cfg.max_seq_len}__mask={int(cfg.use_attention_mask)}__v={fp}"
     return os.path.join(base, name)
 
@@ -112,6 +112,10 @@ def save_run_manifest(cfg, out_dir: str, extra: Optional[Dict[str, Any]] = None)
             "UE_bias": cfg.UE_bias,
             "use_checkpoint": cfg.use_checkpoint,
         },
+        "tokenizer": {
+            "tokenizer_name": cfg.tokenizer_name,
+            "tokenizer_type": cfg.tokenizer_type,
+        },
         "dataset_tag": cfg.dataset_tag,
         "fingerprint": config_fingerprint(cfg),
     }
@@ -156,9 +160,60 @@ def save_model(model, cfg, out_root: Optional[str] = None) -> str:
 # ---- W&B helpers ----
 
 def init_wandb(cfg: Any, config_dict: Optional[Dict[str, Any]] = None) -> None:
-    """Minimal W&B init to keep logs concise."""
+    """Minimal W&B init with UX improvements for experiment tracking."""
     import wandb
-    wandb.init(project=cfg.wandb_project_name, config=config_dict, reinit=True)
+    from pathlib import Path
+    
+    # Extract tokenizer name for better run naming
+    tokenizer_name = getattr(cfg, 'tokenizer_name', 'unknown')
+    is_custom = Path(tokenizer_name).exists() and tokenizer_name.endswith('.json')
+    
+    # Create descriptive run name and tags
+    if is_custom:
+        if "roneneldan_TinyStories" in tokenizer_name:
+            name_suffix = "custom_tinystories"
+        else:
+            name_suffix = "custom"
+        tags = ["custom_tokenizer"]
+    else:
+        if "gpt-neo" in tokenizer_name:
+            name_suffix = "gpt_neo"
+        else:
+            name_suffix = tokenizer_name.split("/")[-1] if "/" in tokenizer_name else tokenizer_name
+        tags = ["hf_tokenizer"]
+    
+    wandb.init(
+        project=cfg.wandb_project_name, 
+        config=config_dict, 
+        reinit=True,
+        name=f"sweep_{name_suffix}",
+        tags=tags
+    )
+
+# ---- Config helpers ----
+def flatten_cfg(cfg: Any) -> Any:
+    """Flatten namespaced Hydra config groups (model, tokenizer, logging) into a flat object.
+
+    Returns an attribute-accessible object (SimpleNamespace) with merged keys.
+    """
+    from types import SimpleNamespace
+    try:
+        from omegaconf import OmegaConf
+        to_dict = lambda x: (OmegaConf.to_container(x, resolve=True) if x is not None else {})
+    except Exception:
+        to_dict = lambda x: dict(x) if x is not None else {}
+
+    merged: Dict[str, Any] = {}
+    for group in ("model", "tokenizer", "logging"):
+        try:
+            sub = cfg.get(group) if hasattr(cfg, 'get') else getattr(cfg, group, None)
+        except Exception:
+            sub = getattr(cfg, group, None)
+        if sub is not None:
+            d = to_dict(sub)
+            if isinstance(d, dict):
+                merged.update(d)
+    return SimpleNamespace(**merged)
 
 
 def log_dataset_artifacts(tok_dir: str, pack_dir: str, cfg: Any) -> None:

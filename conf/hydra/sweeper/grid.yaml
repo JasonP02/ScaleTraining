@@ -2,5 +2,4 @@
 _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
 max_batch_size: null
 params:
-  primary_optimizer: adamuon,muon,adamw
-
+  tokenizer.tokenizer_name: EleutherAI/gpt-neo-125M,tokenizers/tokenizer_roneneldan_TinyStories_v12800.json

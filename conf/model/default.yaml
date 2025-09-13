@@ -1,0 +1,47 @@
+## Model and training knobs (namespaced)
+
+# Runtime
+device: cuda            # 'auto'|'cuda'|'cpu'
+batch_size: 32
+accum_steps: 4
+grad_clip_norm: 1.0
+max_train_tokens: 10000000
+max_val_tokens: 1000000000
+logits_chunk_size: 256
+
+# Architecture
+vocab_size: 50257       # auto-set from tokenizer metadata if available
+n_layer: 2
+max_seq_len: 1000
+n_head: 8
+n_embed: 256
+n_hidden: 1024          # 256*4
+bias: true
+UE_bias: false
+attn_dropout: 0.2
+resid_dropout: 0.2
+use_checkpoint: true
+rope_implementation: torch_builtin  # options: custom|torch_builtin|none
+rope_config:
+  theta: 10000          # base frequency
+  use_complex: true     # complex number representation
+
+# Optimizer
+lr: 0.02
+muon_lr: 0.02            # Recommended Muon LR (~spectral norm units)
+beta: 0.9
+beta2: 0.999
+weight_decay: 0.0
+ns_iters: 5
+eps: 1e-8
+primary_optimizer: adamw   # one of: adamuon|muon|adamw
+use_baseline_adam: false   # if true, use single Adam optimizer for all params
+baseline_adam_config:
+  lr: 1e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+
+# LR scheduling
+lr_schedule: cosine         # one of: none|cosine|linear
+warmup_tokens: 1000000      # number of tokens for linear warmup
+min_lr_scale: 0.1           # final LR scale at end of schedule (for cosine/linear)

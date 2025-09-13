@@ -2,7 +2,7 @@ from itertools import chain
 from datasets import load_from_disk
 import hydra
 from omegaconf import DictConfig
-from scaletraining.util.utils import write_metadata, tokenized_dir, packed_dir, _cfg_subset
+from scaletraining.util.utils import write_metadata, tokenized_dir, packed_dir, _cfg_subset, flatten_cfg
 
 def group_texts(examples, block_size: int):
     '''
@@ -75,6 +75,7 @@ def main(cfg: DictConfig) -> None:
 
     Uses tokenized_dir(cfg) as input and writes packed blocks to packed_dir(cfg).
     """
+    cfg = flatten_cfg(cfg)
     tok_dir = tokenized_dir(cfg)
     pk_dir = packed_dir(cfg)
     pack_and_save(

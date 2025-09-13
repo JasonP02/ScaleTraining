@@ -1,0 +1,21 @@
+## Logging, outputs, and generation (namespaced)
+
+# W&B and outputs
+wandb_project_name: tiny-stories-base
+output_dir: outputs
+debug_memory: true
+experiment_tags: []
+log_implementation_details: true
+
+# Artifacts (disabled)
+log_dataset_artifacts: false
+log_model_artifacts: false
+
+# Generation defaults (used by scaletraining-generate and optional post-train sample)
+prompt: "There was a star ship in the sky and "
+# Provide via CLI: model_path=/path/to/model.pt (defaults to empty)
+model_path: ""
+generation_max_tokens: 1000
+generation_temperature: 1.0
+generation_top_k: 50
+generate_after_train: false

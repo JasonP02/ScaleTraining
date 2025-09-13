@@ -1,5 +1,10 @@
 defaults:
   - _self_
+  # Namespaced groups: model, tokenizer, logging
+  - model: default
+  - tokenizer: default
+  - logging: default
+  # Hydra sweeper config
   - override hydra/sweeper: grid
 
 hydra:
@@ -9,90 +14,4 @@ hydra:
     dir: multirun
     subdir: ${hydra.job.num}
 
-# Minimal Hydra config mirroring the previous dataclass defaults.
-
-# Device and batch
-device: cuda            # 'auto'|'cuda'|'cpu'
-batch_size: 32
-accum_steps: 4
-
-# Model sizes
-vocab_size: 50257       # will be auto-set from tokenizer metadata if available
-n_layer: 2
-max_seq_len: 1000
-n_head: 8
-n_embed: 256
-n_hidden: 1024          # 256*4
-bias: true
-UE_bias: false
-attn_dropout: 0.2
-resid_dropout: 0.2
-use_checkpoint: true
-rope_implementation: torch_builtin  # options: custom|torch_builtin|none
-rope_config:            # RoPE-specific configuration
-  theta: 10000          # base frequency (currently hardcoded to 10000)
-  use_complex: true    # whether to use complex number representation
-
-# Training
-grad_clip_norm: 1.0
-max_train_tokens: 100000000
-max_val_tokens: 1000000000
-logits_chunk_size: 256
-
-# Optimizer
-lr: 1e-4
-muon_lr: 0.02            # Recommended Muon LR (~spectral norm units)
-beta: 0.9
-beta2: 0.999
-weight_decay: 0.0
-ns_iters: 5
-eps: 1e-8
-primary_optimizer: adamw   # one of: adamuon|muon|adamw
-
-# LR scheduling
-lr_schedule: cosine         # one of: none|cosine|linear
-warmup_tokens: 1000000          # number of tokens for linear warmup
-min_lr_scale: 0.1         # final LR scale at end of schedule (for cosine/linear)
-use_baseline_adam: false      # if true, use single Adam optimizer for all params
-baseline_adam_config:         # config for baseline Adam (when use_baseline_adam=true)
-  lr: 1e-4                    # can be different from main lr
-  weight_decay: 0.01          # typical AdamW weight decay
-  betas: [0.9, 0.999]         # standard Adam betas
-
-# Data
-tokenized_path: datasets/tokenized_base
-batched_tokenized_path: datasets/tokenized_batched
-use_attention_mask: false
-hf_dataset_names: roneneldan/TinyStories
-do_packing: false
-pack_num_proc: 8
-pack_map_batch_size: 400
-pack_writer_batch_size: 4000
-num_proc: 8
-dataset_tag: ""
-strict_dataset_compat: false
-
-# Tokenizer
-tokenizer_name: EleutherAI/gpt-neo-125M
-tokenizer_type: hf
-
-# Logging / Outputs
-wandb_project_name: tiny-stories-base
-output_dir: outputs
-debug_memory: true
-experiment_tags: []         # tags for experiment tracking (e.g., "baseline_adam", "no_rope")
-log_implementation_details: true # log which implementations are being used
-
-# Sweep settings (Hydra BasicSweeper is configured under conf/hydra/sweeper/grid.yaml)
-
-# Artifact control (all disabled)
-log_dataset_artifacts: false
-log_model_artifacts: false
-
-# Generation defaults (used by scaletraining-generate, can override via CLI)
-prompt: "There was a star ship in the sky and "
-model_path: "/home/j/Projects/ScaleTraining/outputs/v=004acfd1__20250902T234720Z/model.pt"
-generation_max_tokens: 1000
-generation_temperature: 1.0
-generation_top_k: 50
-generate_after_train: false
+# Composes only groups; all knobs live under model/, tokenizer/, logging/.

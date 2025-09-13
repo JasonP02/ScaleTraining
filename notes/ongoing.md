@@ -2,7 +2,7 @@ Working on:
 Training a custom tokenizer
 
 Next task:
-Unsure...
+Implement MoE; 
 
 Questions:
 - How do batching approaches affect model convergence / learning efficency & training speed 
