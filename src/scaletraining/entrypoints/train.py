@@ -21,10 +21,13 @@ from scaletraining.util.utils import (
     save_model,
     resolve_device,
     flatten_cfg,
+    tokenized_dir,
+    packed_dir,
+    read_metadata,
 )
 from scaletraining.training.loop import training_run
 from scaletraining.inference.generation import generate_autoregressive
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 
 @hydra.main(version_base=None, config_path=str(Path(__file__).parent.parent.parent.parent / "conf"), config_name="config")
@@ -50,10 +53,33 @@ def main(cfg: DictConfig) -> float:
     # Build data
     train_loader, val_loader = build_loaders(flat)
 
+    # Update W&B run name based on the dataset-specific tokenizer actually used
+    try:
+        import wandb
+        tok_dir = tokenized_dir(flat)
+        pk_dir = packed_dir(flat)
+        meta = read_metadata(pk_dir) or read_metadata(tok_dir)
+        tok_path = (meta or {}).get("tokenizer_name")
+        if tok_path:
+            from pathlib import Path as _P
+            base = _P(tok_path).stem
+            if wandb.run is not None:
+                wandb.run.name = f"sweep_{base}"
+    except Exception as _e:
+        # Non-fatal: keep existing W&B name if metadata is unavailable
+        pass
+
     # Dataset artifact logging intentionally disabled.
 
     # Model + loss
     model = TransformerNetwork(flat)
+    # Enable PyTorch 2.x compilation when available
+    try:
+        import torch
+        if hasattr(torch, "compile"):
+            model = torch.compile(model, mode="max-autotune")
+    except Exception as e:
+        print(f"torch.compile disabled: {e}")
     loss_fn = nn.CrossEntropyLoss(reduction='sum')  # summed CE, normalized per token in loop
 
     # Sanity check embedding size vs vocab size after metadata auto-set
@@ -71,7 +97,20 @@ def main(cfg: DictConfig) -> float:
     # Optional: sample generation after training for quick qualitative check
     if flat.generate_after_train:
         try:
-            tok = AutoTokenizer.from_pretrained(flat.tokenizer_name, use_fast=True)
+            tok_path = flat.tokenizer_name
+            from pathlib import Path as _P
+            if isinstance(tok_path, str) and _P(tok_path).exists() and tok_path.endswith('.json'):
+                tok = PreTrainedTokenizerFast(tokenizer_file=tok_path)
+                if tok.eos_token_id is None:
+                    tok.add_special_tokens({"eos_token": ""})
+                if tok.pad_token_id is None:
+                    tok.pad_token = tok.eos_token
+            else:
+                tok = AutoTokenizer.from_pretrained(tok_path, use_fast=True)
+                if tok.eos_token_id is None:
+                    tok.add_special_tokens({"eos_token": ""})
+                if tok.pad_token_id is None:
+                    tok.pad_token = tok.eos_token
             text = generate_autoregressive(
                 model,
                 tok,

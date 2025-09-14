@@ -5,8 +5,6 @@ import hydra
 from omegaconf import DictConfig
 from scaletraining.util.utils import tokenized_dir, write_metadata, _cfg_subset, flatten_cfg
 from pathlib import Path
-import subprocess
-import sys
 
 
 def get_tokenizer_name_from_dataset(dataset_specs, vocab_size: int | None = None):
@@ -40,23 +38,12 @@ def ensure_dataset_tokenizer_exists(cfg):
     if not Path(dataset_tokenizer).exists():
         print(f"Dataset-specific tokenizer not found: {dataset_tokenizer}")
         print("Training new tokenizer for dataset(s):", cfg.hf_dataset_names)
-        
-        # Run the tokenizer training
+        # Train in-process to avoid Hydra subprocess overhead and keep config context
         try:
-            result = subprocess.run([
-                sys.executable, "-m", "scaletraining.data_processing.train_tokenizer"
-            ], cwd=str(Path.cwd()), capture_output=True, text=True)
-            
-            if result.returncode == 0:
-                print("Tokenizer training completed successfully")
-                print(result.stdout)
-            else:
-                print("Tokenizer training failed:")
-                print(result.stderr)
-                raise RuntimeError("Failed to train tokenizer")
-                
+            from scaletraining.data_processing.train_tokenizer import train_tokenizer_from_cfg
+            train_tokenizer_from_cfg(cfg)
         except Exception as e:
-            print(f"Error training tokenizer: {e}")
+            print(f"Error training tokenizer in-process: {e}")
             raise
     else:
         print(f"Using existing dataset-specific tokenizer: {dataset_tokenizer}")
@@ -142,7 +129,6 @@ def tokenize_dataset(cfg) -> None:
     
     tok, eos_id = get_tokenizer(tokenizer_name)
     save_path = tokenized_dir(cfg)
-    use_mask = cfg.use_attention_mask
     max_len = int(cfg.max_seq_len)
 
     try:
@@ -157,16 +143,10 @@ def tokenize_dataset(cfg) -> None:
             truncation=True,
             max_length=max_len - 1,
             padding=False,
-            return_attention_mask=use_mask,
         )
         input_ids = out["input_ids"]
         input_ids = [ids + [eos_id] for ids in input_ids]
-        if use_mask:
-            attn = out.get("attention_mask", [[1] * len(ids) for ids in input_ids])
-            attn = [m + [1] for m in attn]
-            return {"input_ids": input_ids, "attention_mask": attn}
-        else:
-            return {"input_ids": input_ids}
+        return {"input_ids": input_ids}
 
     train_split = "train" if "train" in ds else list(ds.keys())[0]
     val_split = "validation" if "validation" in ds else ("test" if "test" in ds else None)

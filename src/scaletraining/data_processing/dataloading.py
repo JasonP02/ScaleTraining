@@ -46,14 +46,41 @@ def build_loaders(cfg):
                 cfg.vocab_size = int(saved_vocab)
             except Exception:
                 pass
+        # Propagate canonical tokenizer path into cfg for downstream usage (generation, logging)
+        saved_tok = meta.get("tokenizer_name")
+        if saved_tok:
+            try:
+                cfg.tokenizer_name = saved_tok
+            except Exception:
+                pass
 
     train = load_from_disk(f"{pk_dir}/train").with_format("torch", columns=["input_ids"])
-    train_loader = DataLoader(train, batch_size=cfg.batch_size, shuffle=True, drop_last=True)
+    # DataLoader performance knobs: parallel workers + pinned memory for faster H2D copies.
+    # persistent_workers avoids process respawn overhead per epoch; prefetch_factor overlaps host/GPU work.
+    train_loader = DataLoader(
+        train,
+        batch_size=cfg.batch_size,
+        shuffle=True,
+        drop_last=True,
+        num_workers=getattr(cfg, 'loader_num_workers', 0),
+        pin_memory=bool(getattr(cfg, 'loader_pin_memory', False)),
+        persistent_workers=bool(getattr(cfg, 'loader_persistent_workers', False)) if getattr(cfg, 'loader_num_workers', 0) > 0 else False,
+        prefetch_factor=int(getattr(cfg, 'loader_prefetch_factor', 2)) if getattr(cfg, 'loader_num_workers', 0) > 0 else None,
+    )
 
     val_loader = None
     try:
         val = load_from_disk(f"{pk_dir}/val").with_format("torch", columns=["input_ids"])
-        val_loader = DataLoader(val, batch_size=cfg.batch_size, shuffle=False, drop_last=False)
+        val_loader = DataLoader(
+            val,
+            batch_size=cfg.batch_size,
+            shuffle=False,
+            drop_last=False,
+            num_workers=getattr(cfg, 'loader_num_workers', 0),
+            pin_memory=bool(getattr(cfg, 'loader_pin_memory', False)),
+            persistent_workers=bool(getattr(cfg, 'loader_persistent_workers', False)) if getattr(cfg, 'loader_num_workers', 0) > 0 else False,
+            prefetch_factor=int(getattr(cfg, 'loader_prefetch_factor', 2)) if getattr(cfg, 'loader_num_workers', 0) > 0 else None,
+        )
     except Exception:
         pass
     return train_loader, val_loader

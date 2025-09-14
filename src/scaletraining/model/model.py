@@ -62,18 +62,30 @@ class AttentionBlock(nn.Module):
         return q_rot, k_rot
 
     def _apply_rope_torch_builtin(self, q, k):
-        """Prefer PyTorch built-in RoPE; fallback to local implementation."""
-        if hasattr(torch.nn.functional, 'rotary_position_embedding'):
-            T = q.size(2)
-            cos = self.cos_freqs[:T, :].to(device=q.device, dtype=q.dtype)
-            sin = self.sin_freqs[:T, :].to(device=q.device, dtype=q.dtype)
-            return torch.nn.functional.rotary_position_embedding(q, k, cos, sin)
-        # Fallback
-        return self._apply_rope(q, k, self.cos_freqs, self.sin_freqs)
+        """Use a library RoPE if available, else fallback to local implementation.
+
+        Attempts HuggingFace's LLaMA apply_rotary_pos_emb; otherwise uses local.
+        """
+        T = q.size(2)
+        cos = self.cos_freqs[:T, :].to(device=q.device, dtype=q.dtype)
+        sin = self.sin_freqs[:T, :].to(device=q.device, dtype=q.dtype)
+        try:
+            # HuggingFace implementation (LLaMA). Shapes: [B, N, T, H] are supported.
+            from transformers.models.llama.modeling_llama import apply_rotary_pos_emb as _hf_apply_rope
+            return _hf_apply_rope(q, k, cos, sin)
+        except Exception:
+            # Fallback to local implementation
+            return self._apply_rope(q, k, self.cos_freqs, self.sin_freqs)
 
         
     def forward(self, x):
         B, T, E = x.shape
+        # Ensure precomputed RoPE tables cover the current sequence length when enabled
+        if self.rope_implementation != 'none':
+            assert T <= self.max_seq_len, (
+                f"Sequence length {T} exceeds RoPE table size {self.max_seq_len}. "
+                "Increase model.max_seq_len or reduce input length."
+            )
 
         # x (BTE) ; W.T (E, 3E)
         # x @ W.T -> (B, T, 3E)
@@ -101,8 +113,8 @@ class AttentionBlock(nn.Module):
 class MLPBlock(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        self.Wh = nn.Linear(cfg.n_embed, cfg.n_hidden, bias=cfg.bias, device=cfg.device)
-        self.We = nn.Linear(cfg.n_hidden, cfg.n_embed, bias=cfg.bias, device=cfg.device)
+        self.Wh = nn.Linear(cfg.n_embed, cfg.n_hidden, bias=cfg.bias)
+        self.We = nn.Linear(cfg.n_hidden, cfg.n_embed, bias=cfg.bias)
         self.dropout = nn.Dropout(cfg.resid_dropout)
 
     def forward(self,x):
@@ -126,21 +138,99 @@ class TransformerBlock(nn.Module):
         x = x + self.mlp(self.ln(x))
         return x
 
-class MoeBlock(nn.Module):
+class ExpertFFN(nn.Module):
+    def __init__(self, d_model, d_hidden, act="swiGLU", bias=True, device=None):
+        super().__init__()
+        self.act = act
+        self.W1 = nn.Linear(d_model, 2*d_hidden if act=="swiGLU" else d_hidden,
+                            bias=bias)
+        self.W2 = nn.Linear(d_hidden, d_model, bias=bias)
+
+    def forward(self, x):
+        if self.act == "swiGLU":
+            a, b = self.W1(x).chunk(2, dim=-1)
+            h = F.silu(a) * b
+        else:
+            h = F.relu(self.W1(x))
+        return self.W2(h)
+
+
+class MoELayer(nn.Module):
     def __init__(self, cfg):
         super().__init__()
+        self.n_experts  = cfg.moe_n_experts
+        self.top_k      = cfg.moe_top_k
+        assert 1 <= self.top_k <= self.n_experts
+
+        self._last_aux_loss = None
+        self.router_noise = float(cfg.moe_router_noise)
+        self.router_temp = float(cfg.moe_router_temp)
+        self.router     = nn.Linear(cfg.n_embed, self.n_experts, bias=False)
+
+        self.experts = nn.ModuleList([
+            ExpertFFN(cfg.n_embed, cfg.moe_n_hidden, act=cfg.moe_activation,
+                      bias=cfg.bias)
+            for _ in range(self.n_experts)
+        ])
+        self.shared = (ExpertFFN(cfg.n_embed, cfg.moe_n_hidden, act=cfg.moe_activation,
+                                 bias=cfg.bias)
+                       if getattr(cfg, "moe_use_shared", False) else None)
+
+    def forward(self, x):
+        B,T,D = x.shape
+        z = self.router(x)
+
+        if self.router_noise > 0:
+            z = z + self.router_noise * torch.randn_like(z)
+        if self.router_temp != 1.0:
+            z = z / self.router_temp
+
+        vals, idx = torch.topk(z, self.top_k, dim=-1)
+        gates = F.softmax(vals, dim=-1)
+
+        p = F.softmax(z, dim=-1) # [B,T,E]
+        imp = p.mean(dim=(0,1)) # importance distribution
+        E = z.size(-1)
+        mass = z.new_zeros(E)
+        mass.scatter_add_(0, idx.reshape(-1), gates.reshape(-1))
+        load = mass / mass.sum().clamp_min(1e-12)
+        lb = E * (imp * load).sum()
+        self._last_aux_loss = lb
+
+        N = B*T
+        flat_x = x.view(N,D) # Tokens flattened for vectorization
+        flat_idx = idx.view(N, -1) # [N,k] expert indices per token
+        flat_gates = gates.view(N, -1) # [N,k] gate weights per token
+
+        flat_out = torch.zeros_like(flat_x)
+
+        for expert in range(self.n_experts):
+            token_mask = (flat_idx == expert).any(dim=1) # if expert activates on token, make value 1
+            if not token_mask.any():
+                continue # pass if no expert is used; 
+                # might want to use this spot for storing statistics
+            tok_ids = torch.where(token_mask)[0]
+            x_e = flat_x[tok_ids]
+            g_e = (flat_gates[tok_ids] * (flat_idx[tok_ids] == expert)).sum(dim=1, keepdim=True)
+            y_e = self.experts[expert](x_e)
+            flat_out.index_add_(dim=0, index=tok_ids, source=g_e*y_e)
         
+        out = flat_out.view(B,T,D)
+        if self.shared is not None:
+            out += self.shared(x)
+        
+        return out
 
 class MoEBlock(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.ln = nn.LayerNorm(cfg.n_embed)
         self.attention = AttentionBlock(cfg)
-        self.mlp = MLPBlock(cfg)
+        self.moe = MoELayer(cfg)
     
     def forward(self, x):
         x = x + self.attention(self.ln(x))
-        x = x + self.mlp(self.ln(x))
+        x = x + self.moe(self.ln(x))
         return x
     
 class TransformerNetwork(nn.Module):
@@ -151,7 +241,8 @@ class TransformerNetwork(nn.Module):
         self.W_ue = nn.Linear(cfg.n_embed, cfg.vocab_size, bias=cfg.UE_bias)
         self.W_ue.weight = self.token_embedding.weight
 
-        block_cls = MoEBlock if cfg.use_moe else TransformerBlock
+        # TODO enable the usage of MoE blocks in designated layers
+        block_cls = MoEBlock if cfg.use_moe else TransformerBlock # For comparing MoE and transformer
         self.transformer_blocks = nn.ModuleList([
             block_cls(cfg) for _ in range(cfg.n_layer)
         ])
@@ -175,3 +266,13 @@ class TransformerNetwork(nn.Module):
     def forward(self, x):
         hidden = self.forward_hidden(x)
         return self.W_ue(hidden)
+
+    # in TransformerNetwork (src/scaletraining/model/model.py)
+    def moe_aux_loss(self):
+        total = None
+        for m in self.modules():
+            if isinstance(m, MoELayer) and getattr(m, "_last_aux_loss", None) is not None:
+                total = m._last_aux_loss if total is None else total + m._last_aux_loss
+        if total is None:
+            return self.W_ue.weight.new_tensor(0.0, dtype=torch.float32)
+        return total

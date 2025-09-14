@@ -8,6 +8,9 @@ grad_clip_norm: 1.0
 max_train_tokens: 10000000
 max_val_tokens: 1000000000
 logits_chunk_size: 256
+use_flash_sdp: true
+use_mem_efficient_sdp: true
+use_math_sdp: false
 
 # Transformer Architecture
 vocab_size: 50257       # auto-set from tokenizer metadata if available
@@ -27,7 +30,30 @@ rope_config:
   use_complex: true     # complex number representation
 
 # MoE Architecture
+use_moe: true
+moe_n_experts: 32
+moe_top_k: 2
+moe_n_hidden: 1024
+moe_activation: "swiGLU"
+moe_use_shared: false
 
+moe_router_noise: 0.005
+moe_router_temp: 1.0
+moe_lb_coef: 0.01
+
+# Optional schedules for MoE hyperparameters (tokens-based)
+# Schedules: 'none' | 'linear' | 'cosine'
+moe_router_temp_schedule: none
+moe_router_temp_start: ${model.moe_router_temp}
+moe_router_temp_end: 1.0
+
+moe_router_noise_schedule: none
+moe_router_noise_start: ${model.moe_router_noise}
+moe_router_noise_end: 0.0
+
+moe_lb_coef_schedule: none
+moe_lb_coef_start: ${model.moe_lb_coef}
+moe_lb_coef_end: ${model.moe_lb_coef}
 
 # Optimizer
 lr: 0.02

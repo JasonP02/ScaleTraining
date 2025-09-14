@@ -117,25 +117,17 @@ def build_optimizers(cfg, matrix_params: List[nn.Parameter], other_params: List[
     return primary, secondary
 
 
-def prepare_targets(input_ids: torch.Tensor, attn_mask: torch.Tensor | None) -> Tuple[torch.Tensor, int]:
-    """Create next‑token targets and compute effective token count.
+def prepare_targets(input_ids: torch.Tensor) -> Tuple[torch.Tensor, int]:
+    """Create next‑token targets and compute effective token count (no masks).
 
     Args:
         input_ids: LongTensor shape [B, T], token ids.
-        attn_mask: Optional mask [B, T] with 1 for valid and 0 for padding.
     Returns:
-        (targets, total_effective_tokens) where targets is [B, T-1] with -100 ignored indices.
+        (targets, total_tokens) where targets is [B, T-1].
     """
     targets = input_ids[:, 1:]
-    if attn_mask is not None:
-        target_mask = attn_mask[:, 1:]
-        ignore = (target_mask == 0)
-        targets = targets.clone()
-        targets[ignore] = -100
-        total_effective = targets.ne(-100).sum().item()
-    else:
-        total_effective = targets.numel()
-    return targets, int(total_effective)
+    total_effective = int(targets.numel())
+    return targets, total_effective
 
 
 def compute_loss_sum(model, hidden: torch.Tensor, targets: torch.Tensor, chunk_size: int, loss_fn: nn.Module) -> torch.Tensor:
@@ -202,6 +194,31 @@ def _compute_lr_scale_tokens(used_tokens: int, cfg) -> float:
         return 1.0
 
 
+def _compute_progress_t(used_tokens: int, cfg) -> float:
+    """Token-based progress t in [0,1] after warmup, for generic schedules."""
+    warmup_tokens = int(cfg.warmup_tokens or 0)
+    total = int(cfg.max_train_tokens or 0)
+    if total <= 0:
+        total = max(used_tokens, 1)
+    post = max(0, used_tokens - warmup_tokens)
+    denom = max(1, total - warmup_tokens)
+    return max(0.0, min(1.0, post / denom))
+
+
+def _schedule_value(start: float, end: float, t: float, schedule: str) -> float:
+    """Interpolate between start->end with optional cosine/linear schedule.
+
+    References:
+      - GShard (Lepikhin et al., 2020) and Switch Transformers (Fedus et al., 2021) discuss routing noise/temperature & load balancing annealing.
+    """
+    if schedule == 'linear':
+        return float(start + (end - start) * t)
+    if schedule == 'cosine':
+        import math
+        return float(end + 0.5 * (start - end) * (1.0 + math.cos(math.pi * t)))
+    return float(start)
+
+
 def training_run(cfg, model, train_loader: DataLoader, *, loss_fn: nn.Module) -> Dict[str, list]:
     """Functional training loop until reaching token budget.
 
@@ -209,7 +226,7 @@ def training_run(cfg, model, train_loader: DataLoader, *, loss_fn: nn.Module) ->
         cfg: Hydra config with fields used: device, accum_steps, grad_clip_norm,
              logits_chunk_size, max_train_tokens, debug_memory.
         model: nn.Module with `forward_hidden` and `W_ue` attributes.
-        train_loader: DataLoader yielding dicts with 'input_ids' and optional 'attention_mask'.
+        train_loader: DataLoader yielding dicts with 'input_ids'.
         loss_fn: nn.CrossEntropyLoss(reduction='sum') for per‑token normalization.
     Returns:
         stats: dict with key 'train_loss' (list of averaged per‑token losses per accumulation window).
@@ -245,18 +262,20 @@ def training_run(cfg, model, train_loader: DataLoader, *, loss_fn: nn.Module) ->
     while used_tokens < cfg.max_train_tokens and not stop_training:
         for idx, batch in enumerate(train_loader):
             input_ids = batch['input_ids'].to(cfg.device)
-            attn_mask = batch.get('attention_mask', None)
-            if attn_mask is not None:
-                attn_mask = attn_mask.to(cfg.device)
+            # Attention masks are not used when training on packed sequences
 
             ctx = autocast(device_type='cuda', dtype=torch.bfloat16) if (cfg.device == 'cuda' and torch.cuda.is_available()) else contextlib.nullcontext()
             with ctx:
                 hidden = model.forward_hidden(input_ids)
                 hidden = hidden[:, :-1, :]
-                targets, effective = prepare_targets(input_ids, attn_mask)
+                targets, effective = prepare_targets(input_ids)
                 loss_sum = compute_loss_sum(model, hidden, targets, cfg.logits_chunk_size, loss_fn)
                 per_token_loss = loss_sum / max(1, effective)
-                loss = per_token_loss / cfg.accum_steps
+
+                aux = model.moe_aux_loss() if hasattr(model, "moe_aux_loss") else hidden.new_tensor(0.0, dtype=torch.float32)
+                total_loss = per_token_loss + float(cfg.moe_lb_coef) * aux.to(per_token_loss.dtype)
+
+                loss = total_loss / cfg.accum_steps
 
             loss.backward()
             accum_loss_sum += float(loss_sum.item())
@@ -269,6 +288,38 @@ def training_run(cfg, model, train_loader: DataLoader, *, loss_fn: nn.Module) ->
                 nn.utils.clip_grad_norm_(model.parameters(), max_norm=cfg.grad_clip_norm)
                 # LR scheduling based on tokens
                 lr_scale = _compute_lr_scale_tokens(used_tokens, cfg)
+                # Optional annealing for MoE hyperparameters
+                t = _compute_progress_t(used_tokens, cfg)
+                # Router temperature
+                temp = _schedule_value(
+                    float(cfg.moe_router_temp_start),
+                    float(cfg.moe_router_temp_end),
+                    t,
+                    cfg.moe_router_temp_schedule,
+                )
+                # Router noise
+                noise = _schedule_value(
+                    float(cfg.moe_router_noise_start),
+                    float(cfg.moe_router_noise_end),
+                    t,
+                    cfg.moe_router_noise_schedule,
+                )
+                # Load-balance coef used below when computing loss for next window
+                lb_coef = _schedule_value(
+                    float(cfg.moe_lb_coef_start),
+                    float(cfg.moe_lb_coef_end),
+                    t,
+                    cfg.moe_lb_coef_schedule,
+                )
+                try:
+                    from scaletraining.model.model import MoELayer  # local import to avoid circularity
+                    for m in model.modules():
+                        if isinstance(m, MoELayer):
+                            m.router_temp = float(temp)
+                            m.router_noise = float(noise)
+                    cfg.moe_lb_coef = float(lb_coef)
+                except Exception:
+                    pass
                 # Apply scaled LRs
                 if opt_primary is not None:
                     for g in opt_primary.param_groups:
@@ -293,10 +344,7 @@ def training_run(cfg, model, train_loader: DataLoader, *, loss_fn: nn.Module) ->
                 except Exception:
                     current_lr = 0.0
                 print(f"Tokens: {used_tokens:,}, Loss: {avg_loss:.4f}, LR: {current_lr:.6g}")
-                try:
-                    wandb.log({'used tokens': used_tokens, 'train_per_token_loss': avg_loss, 'lr': current_lr}, step=used_tokens)
-                except Exception:
-                    pass
+                wandb.log({'used tokens': used_tokens, 'train_per_token_loss': avg_loss, 'lr': current_lr}, step=used_tokens)
                 accum_loss_sum = 0.0
                 accum_token_count = 0
 

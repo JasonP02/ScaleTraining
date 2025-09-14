@@ -12,7 +12,7 @@ from typing import Optional
 import hydra
 from omegaconf import DictConfig
 import torch
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 from scaletraining.model.model import TransformerNetwork
 from scaletraining.util.utils import resolve_device, flatten_cfg
@@ -54,7 +54,21 @@ def main(cfg: DictConfig) -> None:
     model.load_state_dict(state_dict)
     model.eval()
 
-    tok = AutoTokenizer.from_pretrained(flat.tokenizer_name, use_fast=True)
+    # Load tokenizer, supporting local JSON (dataset-specific) via PreTrainedTokenizerFast
+    tok_path = flat.tokenizer_name
+    from pathlib import Path as _P
+    if isinstance(tok_path, str) and _P(tok_path).exists() and tok_path.endswith('.json'):
+        tok = PreTrainedTokenizerFast(tokenizer_file=tok_path)
+        if tok.eos_token_id is None:
+            tok.add_special_tokens({"eos_token": ""})
+        if tok.pad_token_id is None:
+            tok.pad_token = tok.eos_token
+    else:
+        tok = AutoTokenizer.from_pretrained(tok_path, use_fast=True)
+        if tok.eos_token_id is None:
+            tok.add_special_tokens({"eos_token": ""})
+        if tok.pad_token_id is None:
+            tok.pad_token = tok.eos_token
     text = generate_autoregressive(
         model,
         tok,
