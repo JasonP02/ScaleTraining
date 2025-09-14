@@ -9,7 +9,7 @@ max_train_tokens: 10000000
 max_val_tokens: 1000000000
 logits_chunk_size: 256
 
-# Architecture
+# Transformer Architecture
 vocab_size: 50257       # auto-set from tokenizer metadata if available
 n_layer: 2
 max_seq_len: 1000
@@ -25,6 +25,9 @@ rope_implementation: torch_builtin  # options: custom|torch_builtin|none
 rope_config:
   theta: 10000          # base frequency
   use_complex: true     # complex number representation
+
+# MoE Architecture
+
 
 # Optimizer
 lr: 0.02

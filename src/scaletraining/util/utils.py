@@ -5,7 +5,7 @@ import json
 import hashlib
 from typing import Dict, Any, Optional
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 def clear_cuda_cache():
     if torch.cuda.is_available():
@@ -84,7 +84,7 @@ def read_metadata(path: str) -> Dict[str, Any]:
 def save_run_manifest(cfg, out_dir: str, extra: Optional[Dict[str, Any]] = None) -> str:
     os.makedirs(out_dir, exist_ok=True)
     manifest = {
-        "time": datetime.utcnow().isoformat() + "Z",
+        "time": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
         "dataset": _cfg_subset(cfg),
         "optimizer": {
             "primary": cfg.primary_optimizer,
@@ -139,7 +139,7 @@ def save_run_manifest(cfg, out_dir: str, extra: Optional[Dict[str, Any]] = None)
 def save_model(model, cfg, out_root: Optional[str] = None) -> str:
     out_root = out_root or cfg.output_dir
     tag = _sanitize(cfg.dataset_tag)
-    ts = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
+    ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     fp = config_fingerprint(cfg)[:8]
     run_dir_name = "__".join(filter(None, [tag, f"v={fp}", ts]))
     run_dir = os.path.join(out_root, run_dir_name)

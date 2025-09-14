@@ -125,6 +125,23 @@ class TransformerBlock(nn.Module):
         x = x + self.attention(self.ln(x))
         x = x + self.mlp(self.ln(x))
         return x
+
+class MoeBlock(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        
+
+class MoEBlock(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.ln = nn.LayerNorm(cfg.n_embed)
+        self.attention = AttentionBlock(cfg)
+        self.mlp = MLPBlock(cfg)
+    
+    def forward(self, x):
+        x = x + self.attention(self.ln(x))
+        x = x + self.mlp(self.ln(x))
+        return x
     
 class TransformerNetwork(nn.Module):
     def __init__(self, cfg):
@@ -133,8 +150,10 @@ class TransformerNetwork(nn.Module):
         self.token_embedding = nn.Embedding(cfg.vocab_size, cfg.n_embed)
         self.W_ue = nn.Linear(cfg.n_embed, cfg.vocab_size, bias=cfg.UE_bias)
         self.W_ue.weight = self.token_embedding.weight
+
+        block_cls = MoEBlock if cfg.use_moe else TransformerBlock
         self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(cfg, ) for _ in range(cfg.n_layer)
+            block_cls(cfg) for _ in range(cfg.n_layer)
         ])
         self.ln = nn.LayerNorm(cfg.n_embed)
         self.use_checkpoint = cfg.use_checkpoint
