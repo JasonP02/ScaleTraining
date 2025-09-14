@@ -188,32 +188,58 @@ class MoELayer(nn.Module):
         vals, idx = torch.topk(z, self.top_k, dim=-1)
         gates = F.softmax(vals, dim=-1)
 
+        # generally dont understand this.
         p = F.softmax(z, dim=-1) # [B,T,E]
         imp = p.mean(dim=(0,1)) # importance distribution
         E = z.size(-1)
         mass = z.new_zeros(E)
         mass.scatter_add_(0, idx.reshape(-1), gates.reshape(-1))
         load = mass / mass.sum().clamp_min(1e-12)
-        lb = E * (imp * load).sum()
-        self._last_aux_loss = lb
+        self._last_aux_loss = E * (imp * load).sum()
 
-        N = B*T
+        N = B * T
         flat_x = x.view(N,D) # Tokens flattened for vectorization
         flat_idx = idx.view(N, -1) # [N,k] expert indices per token
         flat_gates = gates.view(N, -1) # [N,k] gate weights per token
 
+        assign_expert = flat_idx.reshape(-1)
+        assign_token = torch.arange(N, device=x.device).repeat_interleave(self.top_k) # what
+        assign_weight = flat_gates.reshape(-1).unsqueeze(-1)
+
+        order = torch.argsort(assign_expert) # what
+        sorted_expert = assign_expert[order]
+        sorted_token = assign_token[order]
+        sorted_weight = assign_weight[order]
+
+        counts = torch.bincount(assign_expert, minlength=self.n_experts)
+        offsets = torch.zeros_like(counts)
+        offsets[1:] = torch.cumsum(counts[:-1], dim=0)
+
+
         flat_out = torch.zeros_like(flat_x)
 
         for expert in range(self.n_experts):
-            token_mask = (flat_idx == expert).any(dim=1) # if expert activates on token, make value 1
-            if not token_mask.any():
-                continue # pass if no expert is used; 
-                # might want to use this spot for storing statistics
-            tok_ids = torch.where(token_mask)[0]
-            x_e = flat_x[tok_ids]
-            g_e = (flat_gates[tok_ids] * (flat_idx[tok_ids] == expert)).sum(dim=1, keepdim=True)
+            c = counts[expert].item()
+            if c == 0:
+                continue
+
+            start = offsets[expert].item()
+            end = start + c
+
+            tok_ids = sorted_token[start:end]
+            w_e = sorted_weight[start:end]
+            x_e = flat_x.index_select(0, tok_ids)
+
+            # OLD
+            # token_mask = (flat_idx == expert).any(dim=1) # if expert activates on token, make value 1
+            # if not token_mask.any():
+            #     continue # pass if no expert is used; 
+            #     # might want to use this spot for storing statistics
+            # tok_ids = torch.where(token_mask)[0]
+            # x_e = flat_x[tok_ids]
+            # g_e = (flat_gates[tok_ids] * (flat_idx[tok_ids] == expert)).sum(dim=1, keepdim=True)
             y_e = self.experts[expert](x_e)
-            flat_out.index_add_(dim=0, index=tok_ids, source=g_e*y_e)
+            flat_out.index_add_(dim=0, index=tok_ids, source=w_e*y_e)
         
         out = flat_out.view(B,T,D)
         if self.shared is not None:
