@@ -207,45 +207,38 @@ class MoELayer(nn.Module):
         assign_weight = flat_gates.reshape(-1).unsqueeze(-1)
 
         order = torch.argsort(assign_expert) # what
-        sorted_expert = assign_expert[order]
-        sorted_token = assign_token[order]
-        sorted_weight = assign_weight[order]
 
-        counts = torch.bincount(assign_expert, minlength=self.n_experts)
+        # After sorting by expert:
+        # order = torch.argsort(assign_expert)
+        sorted_expert = assign_expert[order]              # [N*k]
+        sorted_token  = assign_token[order]               # [N*k]
+        sorted_weight = assign_weight[order]              # [N*k, 1]
+
+        # Compact run-length encoding of consecutive equal expert ids
+        present_experts, counts = torch.unique_consecutive(sorted_expert, return_counts=True)
+        # Offsets are cumulative starts of each run
         offsets = torch.zeros_like(counts)
         offsets[1:] = torch.cumsum(counts[:-1], dim=0)
 
-
         flat_out = torch.zeros_like(flat_x)
+        # Iterate only present experts
+        for i in range(present_experts.numel()):
+            e = int(present_experts[i])
+            start = int(offsets[i])
+            end = int(offsets[i] + counts[i])
 
-        for expert in range(self.n_experts):
-            c = counts[expert].item()
-            if c == 0:
-                continue
+            tok_ids = sorted_token[start:end]         # [c]
+            w_e     = sorted_weight[start:end]        # [c, 1]
+            x_e     = flat_x.index_select(0, tok_ids) # [c, D]
 
-            start = offsets[expert].item()
-            end = start + c
+            y_e = self.experts[e](x_e)
+            flat_out.index_add_(0, tok_ids, w_e * y_e)
 
-            tok_ids = sorted_token[start:end]
-            w_e = sorted_weight[start:end]
-            x_e = flat_x.index_select(0, tok_ids)
-
-            # OLD
-            # token_mask = (flat_idx == expert).any(dim=1) # if expert activates on token, make value 1
-            # if not token_mask.any():
-            #     continue # pass if no expert is used; 
-            #     # might want to use this spot for storing statistics
-            # tok_ids = torch.where(token_mask)[0]
-            # x_e = flat_x[tok_ids]
-            # g_e = (flat_gates[tok_ids] * (flat_idx[tok_ids] == expert)).sum(dim=1, keepdim=True)
-            y_e = self.experts[expert](x_e)
-            flat_out.index_add_(dim=0, index=tok_ids, source=w_e*y_e)
-        
-        out = flat_out.view(B,T,D)
+        out = flat_out.view(B, T, D)
         if self.shared is not None:
-            out += self.shared(x)
-        
+            out = out + self.shared(x)
         return out
+
 
 class MoEBlock(nn.Module):
     def __init__(self, cfg):
@@ -293,7 +286,6 @@ class TransformerNetwork(nn.Module):
         hidden = self.forward_hidden(x)
         return self.W_ue(hidden)
 
-    # in TransformerNetwork (src/scaletraining/model/model.py)
     def moe_aux_loss(self):
         total = None
         for m in self.modules():
