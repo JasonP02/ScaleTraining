@@ -17,7 +17,7 @@ from torch.amp import autocast
 from scaletraining.model.optimizers import AdaMuon, Muon
 
 
-def split_model_matrix_params(named_params: Iterable[Tuple[str, nn.Parameter]]) -> Tuple[List[nn.Parameter], List[nn.Parameter]]:
+def split_model_matrix_params(named_params: Iterable[Tuple[str, nn.Parameter]], *, model: nn.Module | None = None, cfg=None) -> Tuple[List[nn.Parameter], List[nn.Parameter]]:
     """Split parameters into Muon‑eligible hidden matrices vs everything else.
 
     Muon should only optimize hidden weight matrices. We explicitly exclude:
@@ -29,18 +29,45 @@ def split_model_matrix_params(named_params: Iterable[Tuple[str, nn.Parameter]]) 
 
     Args:
         named_params: iterable of (name, parameter) from `model.named_parameters()`.
+        model: optional model to exclude params by identity (embedding/head tied weights).
+        cfg: optional config to detect vocab-sized matrices explicitly.
     Returns:
         (matrix_params, other_params)
     """
+    # Collect strongly-typed exclusions by id (handles tied weights reliably)
+    excluded_ids = set()
+    if model is not None:
+        try:
+            excluded_ids.add(id(getattr(model, 'token_embedding').weight))
+        except Exception:
+            pass
+        try:
+            excluded_ids.add(id(getattr(model, 'W_ue').weight))
+        except Exception:
+            pass
+
     def excluded_from_muon(name: str, p: nn.Parameter) -> bool:
+        # Explicit ids first (embedding and tied head)
+        if id(p) in excluded_ids:
+            return True
         # Exclude embeddings and the tied output head; names are stable in our model
-        if name.startswith('token_embedding'):
+        if name.startswith('token_embedding') or 'embedding' in name:
             return True
         if name.startswith('W_ue'):
             return True
         # Non‑2D tensors are not Muon targets
         if p.dim() != 2:
             return True
+        # Exclude any parameter that looks like a vocab embedding (very wide dimension)
+        if max(p.shape) > 10000:
+            return True
+        # If cfg is provided, exclude matrices with a vocab-sized dimension explicitly
+        try:
+            vocab = int(getattr(cfg, 'vocab_size')) if cfg is not None else None
+            if vocab is not None and (p.shape[0] == vocab or p.shape[1] == vocab):
+                return True
+        except Exception:
+            pass
         return False
 
     seen, muon_mats, other_params = set(), [], []
@@ -233,7 +260,7 @@ def training_run(cfg, model, train_loader: DataLoader, *, loss_fn: nn.Module) ->
     """
     import wandb
 
-    matrix_params, other_params = split_model_matrix_params(model.named_parameters())
+    matrix_params, other_params = split_model_matrix_params(model.named_parameters(), model=model, cfg=cfg)
     # Log optimizer wiring if requested
     if cfg.log_implementation_details:
         def _summarize(ps):

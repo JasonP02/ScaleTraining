@@ -23,6 +23,10 @@ class AttentionBlock(nn.Module):
         # RoPE configuration (custom | torch_builtin | none)
         self.rope_implementation = cfg.rope_implementation
         self.theta = cfg.rope_config.get('theta', 10000)
+        # Optional runtime reporting of which RoPE path is used
+        self._rope_provider = 'none'
+        self._rope_reported = False
+        self._rope_log_details = bool(getattr(cfg, 'log_implementation_details', False))
 
         if self.rope_implementation != 'none':
             assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE, but got %d" % self.head_dim
@@ -66,15 +70,30 @@ class AttentionBlock(nn.Module):
 
         Attempts HuggingFace's LLaMA apply_rotary_pos_emb; otherwise uses local.
         """
+        # Our tensors are [B, N, T, H]; HF expects [B, T, N, H]
         T = q.size(2)
         cos = self.cos_freqs[:T, :].to(device=q.device, dtype=q.dtype)
         sin = self.sin_freqs[:T, :].to(device=q.device, dtype=q.dtype)
         try:
             # HuggingFace implementation (LLaMA). Shapes: [B, N, T, H] are supported.
             from transformers.models.llama.modeling_llama import apply_rotary_pos_emb as _hf_apply_rope
-            return _hf_apply_rope(q, k, cos, sin)
+            q_hf, k_hf = q.transpose(1, 2), k.transpose(1, 2)  # [B, T, N, H]
+            out = _hf_apply_rope(q_hf, k_hf, cos, sin)
+            # HF may return a tuple (q, k) or similar structure
+            q_out, k_out = out
+            q_out = q_out.transpose(1, 2)  # back to [B, N, T, H]
+            k_out = k_out.transpose(1, 2)
+            if self._rope_log_details and not self._rope_reported:
+                print("[rope] torch_builtin provider: huggingface.llama.apply_rotary_pos_emb")
+                self._rope_reported = True
+            self._rope_provider = 'hf_llama'
+            return q_out, k_out
         except Exception:
             # Fallback to local implementation
+            if self._rope_log_details and not self._rope_reported:
+                print("[rope] torch_builtin provider unavailable; falling back to local implementation")
+                self._rope_reported = True
+            self._rope_provider = 'local_fallback'
             return self._apply_rope(q, k, self.cos_freqs, self.sin_freqs)
 
         
@@ -101,6 +120,11 @@ class AttentionBlock(nn.Module):
         if self.rope_implementation == 'torch_builtin':
             q, k = self._apply_rope_torch_builtin(q, k)
         elif self.rope_implementation == 'custom':
+            # Mark that we are using the local/custom RoPE path
+            if self._rope_log_details and not self._rope_reported:
+                print("[rope] provider: custom/local implementation")
+                self._rope_reported = True
+            self._rope_provider = 'custom'
             q, k = self._apply_rope(q, k, self.cos_freqs, self.sin_freqs)
         # 'none': do not apply RoPE
 
@@ -186,7 +210,8 @@ class MoELayer(nn.Module):
             z = z / self.router_temp
 
         vals, idx = torch.topk(z, self.top_k, dim=-1)
-        gates = F.softmax(vals, dim=-1)
+        # Ensure gates match router/logit dtype (avoids dtype mismatches on ROCm)
+        gates = F.softmax(vals, dim=-1).to(dtype=z.dtype)
 
         # generally dont understand this.
         p = F.softmax(z, dim=-1) # [B,T,E]
@@ -220,7 +245,9 @@ class MoELayer(nn.Module):
         offsets = torch.zeros_like(counts)
         offsets[1:] = torch.cumsum(counts[:-1], dim=0)
 
-        flat_out = torch.zeros_like(flat_x)
+        # Accumulation buffer must match the compute dtype under autocast (e.g., bfloat16)
+        # Router logits `z` reflect the active compute dtype, so use `z.dtype`.
+        flat_out = torch.zeros_like(flat_x, dtype=z.dtype)
         # Iterate only present experts
         for i in range(present_experts.numel()):
             e = int(present_experts[i])
@@ -232,7 +259,8 @@ class MoELayer(nn.Module):
             x_e     = flat_x.index_select(0, tok_ids) # [c, D]
 
             y_e = self.experts[e](x_e)
-            flat_out.index_add_(0, tok_ids, w_e * y_e)
+            # Ensure source matches destination dtype for index_add_
+            flat_out.index_add_(0, tok_ids, (w_e * y_e).to(dtype=flat_out.dtype))
 
         out = flat_out.view(B, T, D)
         if self.shared is not None:

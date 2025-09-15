@@ -5,7 +5,7 @@ device: cuda            # 'auto'|'cuda'|'cpu'
 batch_size: 32
 accum_steps: 4
 grad_clip_norm: 1.0
-max_train_tokens: 10000000
+max_train_tokens: 100000000
 max_val_tokens: 1000000000
 logits_chunk_size: 256
 use_flash_sdp: true
@@ -14,11 +14,11 @@ use_math_sdp: false
 
 # Transformer Architecture
 vocab_size: 50257       # auto-set from tokenizer metadata if available
-n_layer: 2
+n_layer: 5
 max_seq_len: 1000
 n_head: 8
-n_embed: 256
-n_hidden: 1024          # 256*4
+n_embed: 512
+n_hidden: 2048          # 256*4
 bias: true
 UE_bias: false
 attn_dropout: 0.2
@@ -30,8 +30,8 @@ rope_config:
   use_complex: true     # complex number representation
 
 # MoE Architecture
-use_moe: true
-moe_n_experts: 32
+use_moe: false
+moe_n_experts: 8
 moe_top_k: 2
 moe_n_hidden: 1024
 moe_activation: "swiGLU"
@@ -63,7 +63,7 @@ beta2: 0.999
 weight_decay: 0.0
 ns_iters: 5
 eps: 1e-8
-primary_optimizer: adamw   # one of: adamuon|muon|adamw
+primary_optimizer: muon   # one of: adamuon|muon|adamw
 use_baseline_adam: false   # if true, use single Adam optimizer for all params
 baseline_adam_config:
   lr: 1e-4
