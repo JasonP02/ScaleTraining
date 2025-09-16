@@ -1,8 +1,8 @@
 Working on:
-Training a custom tokenizer
+Loss vs flops
 
 Next task:
-Implement MoE; 
+perplexity vs context length.
 
 Questions:
 - How do batching approaches affect model convergence / learning efficency & training speed 
