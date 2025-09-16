@@ -128,7 +128,7 @@ def main(cfg: DictConfig) -> float:
     job_result = {
         "final_train_loss": float(stats['train_loss'][-1]) if stats.get('train_loss') else None,
         "primary_optimizer": flat.primary_optimizer,
-        "rope_implementation": flat.rope_implementation,
+        "use_rope": bool(flat.use_rope),
         "lr": float(flat.lr),
         "batch_size": int(flat.batch_size),
         "accum_steps": int(flat.accum_steps),

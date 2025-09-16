@@ -124,7 +124,7 @@ def save_run_manifest(cfg, out_dir: str, extra: Optional[Dict[str, Any]] = None)
     manifest['implementation'] = {
         'optimizer': 'baseline_adam' if cfg.use_baseline_adam else cfg.primary_optimizer,
         'rope': {
-            'implementation': cfg.rope_implementation,
+            'enabled': bool(getattr(cfg, 'use_rope', True)),
             'theta': cfg.rope_config.get('theta', 10000),
         }
     }

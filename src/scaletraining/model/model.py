@@ -20,15 +20,11 @@ class AttentionBlock(nn.Module):
         self.head_dim = cfg.n_embed // cfg.n_head
         self.max_seq_len = cfg.max_seq_len
 
-        # RoPE configuration (custom | torch_builtin | none)
-        self.rope_implementation = cfg.rope_implementation
+        # RoPE configuration (on/off)
+        self.use_rope = bool(getattr(cfg, 'use_rope', True))
         self.theta = cfg.rope_config.get('theta', 10000)
-        # Optional runtime reporting of which RoPE path is used
-        self._rope_provider = 'none'
-        self._rope_reported = False
-        self._rope_log_details = bool(getattr(cfg, 'log_implementation_details', False))
 
-        if self.rope_implementation != 'none':
+        if self.use_rope:
             assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE, but got %d" % self.head_dim
             self.create_rope_lookup()
 
@@ -65,42 +61,10 @@ class AttentionBlock(nn.Module):
         k_rot = torch.stack([k_rot_even, k_rot_odd], dim=-1).reshape(B, N, T, H).to(device=k.device, dtype=k.dtype)
         return q_rot, k_rot
 
-    def _apply_rope_torch_builtin(self, q, k):
-        """Use a library RoPE if available, else fallback to local implementation.
-
-        Attempts HuggingFace's LLaMA apply_rotary_pos_emb; otherwise uses local.
-        """
-        # Our tensors are [B, N, T, H]; HF expects [B, T, N, H]
-        T = q.size(2)
-        cos = self.cos_freqs[:T, :].to(device=q.device, dtype=q.dtype)
-        sin = self.sin_freqs[:T, :].to(device=q.device, dtype=q.dtype)
-        try:
-            # HuggingFace implementation (LLaMA). Shapes: [B, N, T, H] are supported.
-            from transformers.models.llama.modeling_llama import apply_rotary_pos_emb as _hf_apply_rope
-            q_hf, k_hf = q.transpose(1, 2), k.transpose(1, 2)  # [B, T, N, H]
-            out = _hf_apply_rope(q_hf, k_hf, cos, sin)
-            # HF may return a tuple (q, k) or similar structure
-            q_out, k_out = out
-            q_out = q_out.transpose(1, 2)  # back to [B, N, T, H]
-            k_out = k_out.transpose(1, 2)
-            if self._rope_log_details and not self._rope_reported:
-                print("[rope] torch_builtin provider: huggingface.llama.apply_rotary_pos_emb")
-                self._rope_reported = True
-            self._rope_provider = 'hf_llama'
-            return q_out, k_out
-        except Exception:
-            # Fallback to local implementation
-            if self._rope_log_details and not self._rope_reported:
-                print("[rope] torch_builtin provider unavailable; falling back to local implementation")
-                self._rope_reported = True
-            self._rope_provider = 'local_fallback'
-            return self._apply_rope(q, k, self.cos_freqs, self.sin_freqs)
-
-        
     def forward(self, x):
         B, T, E = x.shape
         # Ensure precomputed RoPE tables cover the current sequence length when enabled
-        if self.rope_implementation != 'none':
+        if self.use_rope:
             assert T <= self.max_seq_len, (
                 f"Sequence length {T} exceeds RoPE table size {self.max_seq_len}. "
                 "Increase model.max_seq_len or reduce input length."
@@ -116,17 +80,9 @@ class AttentionBlock(nn.Module):
         k = k.view(B, T, self.n_head, E // self.n_head).transpose(1,2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, E // self.n_head).transpose(1,2) # (B, nh, T, hs)
 
-        # Apply RoPE based on configuration
-        if self.rope_implementation == 'torch_builtin':
-            q, k = self._apply_rope_torch_builtin(q, k)
-        elif self.rope_implementation == 'custom':
-            # Mark that we are using the local/custom RoPE path
-            if self._rope_log_details and not self._rope_reported:
-                print("[rope] provider: custom/local implementation")
-                self._rope_reported = True
-            self._rope_provider = 'custom'
+        # Apply RoPE when enabled; otherwise leave q/k unchanged
+        if self.use_rope:
             q, k = self._apply_rope(q, k, self.cos_freqs, self.sin_freqs)
-        # 'none': do not apply RoPE
 
         # SDPA takes in tensors, with dropout for attention scores
         y = torch.nn.functional.scaled_dot_product_attention(q,k,v,attn_mask=None, dropout_p=self.attn_dropout if self.training else 0, is_causal=True)
