@@ -29,6 +29,10 @@ rope_config:
   theta: 10000          # base frequency
   use_complex: true     # complex number representation
 
+# Evaluation (lightweight, optional)
+eval_interval_tokens: 200000   # set 0 to disable periodic eval during training
+eval_max_batches: 50            # cap validation batches per eval (0 = all)
+
 # MoE Architecture
 use_moe: false
 moe_n_experts: 8

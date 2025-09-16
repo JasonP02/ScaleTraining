@@ -15,7 +15,7 @@ import torch
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 from scaletraining.model.model import TransformerNetwork
-from scaletraining.util.utils import resolve_device, flatten_cfg
+from scaletraining.util.utils import resolve_device, flatten_cfg, find_latest_model_path
 from scaletraining.inference.generation import generate_autoregressive
 
 
@@ -37,8 +37,14 @@ def main(cfg: DictConfig) -> None:
     resolve_device(flat)
 
     model_path = getattr(flat, "model_path", None)
-    if not model_path:
-        raise RuntimeError("Provide model_path=/path/to/model.pt in CLI overrides.")
+    if not model_path or str(model_path).lower() == "latest":
+        # Auto-discover latest model under outputs
+        output_root = getattr(flat, "output_dir", "outputs")
+        auto_path = find_latest_model_path(output_root)
+        if not auto_path:
+            raise RuntimeError("No model_path provided and no latest model found under outputs/. Pass model_path=... or create outputs/<run>/model.pt.")
+        print(f"[generate] Using latest model: {auto_path}")
+        model_path = auto_path
 
     prompt: str = flat.prompt
     max_new_tokens: int = int(flat.generation_max_tokens)
@@ -51,6 +57,13 @@ def main(cfg: DictConfig) -> None:
     model = TransformerNetwork(flat).to(flat.device)
     ckpt = torch.load(model_path, map_location=flat.device)
     state_dict = ckpt.get("state_dict", ckpt)
+    # Normalize keys from compiled/DataParallel checkpoints if present
+    def _strip_prefix(sd, prefix: str):
+        if any(k.startswith(prefix) for k in sd.keys()):
+            return {k[len(prefix):]: v for k, v in sd.items()}
+        return sd
+    state_dict = _strip_prefix(state_dict, "_orig_mod.")
+    state_dict = _strip_prefix(state_dict, "module.")
     model.load_state_dict(state_dict)
     model.eval()
 

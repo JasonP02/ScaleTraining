@@ -148,13 +148,56 @@ def save_model(model, cfg, out_root: Optional[str] = None) -> str:
     # Save model weights
     model_path = os.path.join(run_dir, "model.pt")
     import torch
+    # When using torch.compile, parameters live under wrapper attribute `_orig_mod`.
+    # Prefer saving the original module's state_dict to ensure stable key names.
+    base_mod = getattr(model, "_orig_mod", model)
+    state = base_mod.state_dict()
     torch.save({
-        "state_dict": model.state_dict(),
+        "state_dict": state,
     }, model_path)
 
     # Save manifest
     save_run_manifest(cfg, run_dir)
     return run_dir
+
+
+def find_latest_model_path(output_root: str) -> Optional[str]:
+    """Return path to the most recent model.pt under output_root, or None.
+
+    Strategy:
+      - Look for immediate subdirectories of output_root that contain a file named 'model.pt'.
+      - Rank candidates by the modification time of their model.pt (newest first).
+      - Also honor a symlink 'latest' under output_root if it points to a valid run dir.
+    """
+    try:
+        root = Path(output_root)
+        if not root.exists():
+            return None
+        # Prefer explicit 'latest' symlink if present
+        latest_link = root / "latest"
+        if latest_link.exists():
+            link_target = latest_link.resolve()
+            mp = link_target / "model.pt"
+            if mp.exists():
+                return str(mp)
+
+        candidates = []
+        for child in root.iterdir():
+            if not child.is_dir():
+                continue
+            mp = child / "model.pt"
+            if mp.exists():
+                try:
+                    mtime = mp.stat().st_mtime
+                except Exception:
+                    mtime = 0.0
+                candidates.append((mtime, mp))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return str(candidates[0][1])
+    except Exception:
+        return None
 
 
 # ---- W&B helpers ----

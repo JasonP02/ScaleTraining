@@ -1,252 +1,40 @@
 """
 Functional training loop utilities.
 
-These helpers implement the training loop without an object‑oriented trainer.
+These helpers implement the training loop without an object-oriented trainer.
 Each function has a narrow purpose and explicit inputs/outputs.
 """
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Tuple
 import contextlib
+import math
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
 from torch.amp import autocast
+from torch.utils.data import DataLoader
 
-from scaletraining.model.optimizers import AdaMuon, Muon
-
-
-def split_model_matrix_params(named_params: Iterable[Tuple[str, nn.Parameter]], *, model: nn.Module | None = None, cfg=None) -> Tuple[List[nn.Parameter], List[nn.Parameter]]:
-    """Split parameters into Muon‑eligible hidden matrices vs everything else.
-
-    Muon should only optimize hidden weight matrices. We explicitly exclude:
-    - input embedding matrix (e.g., `token_embedding.weight`)
-    - final output projection (e.g., `W_ue.*`)
-    - all biases/gains (non‑2D tensors)
-
-    Deduplication by identity ensures tied weights (embedding <-> head) are placed once.
-
-    Args:
-        named_params: iterable of (name, parameter) from `model.named_parameters()`.
-        model: optional model to exclude params by identity (embedding/head tied weights).
-        cfg: optional config to detect vocab-sized matrices explicitly.
-    Returns:
-        (matrix_params, other_params)
-    """
-    # Collect strongly-typed exclusions by id (handles tied weights reliably)
-    excluded_ids = set()
-    if model is not None:
-        try:
-            excluded_ids.add(id(getattr(model, 'token_embedding').weight))
-        except Exception:
-            pass
-        try:
-            excluded_ids.add(id(getattr(model, 'W_ue').weight))
-        except Exception:
-            pass
-
-    def excluded_from_muon(name: str, p: nn.Parameter) -> bool:
-        # Explicit ids first (embedding and tied head)
-        if id(p) in excluded_ids:
-            return True
-        # Exclude embeddings and the tied output head; names are stable in our model
-        if name.startswith('token_embedding') or 'embedding' in name:
-            return True
-        if name.startswith('W_ue'):
-            return True
-        # Non‑2D tensors are not Muon targets
-        if p.dim() != 2:
-            return True
-        # Exclude any parameter that looks like a vocab embedding (very wide dimension)
-        if max(p.shape) > 10000:
-            return True
-        # If cfg is provided, exclude matrices with a vocab-sized dimension explicitly
-        try:
-            vocab = int(getattr(cfg, 'vocab_size')) if cfg is not None else None
-            if vocab is not None and (p.shape[0] == vocab or p.shape[1] == vocab):
-                return True
-        except Exception:
-            pass
-        return False
-
-    seen, muon_mats, other_params = set(), [], []
-    for name, p in named_params:
-        if id(p) in seen:
-            continue
-        seen.add(id(p))
-        if excluded_from_muon(name, p):
-            other_params.append(p)
-        else:
-            muon_mats.append(p)
-    return muon_mats, other_params
+from scaletraining.training.training_utils import (
+    apply_moe_schedules,
+    build_optimizers,
+    compute_loss_sum,
+    compute_lr_scale_tokens,
+    compute_progress_t,
+    prepare_targets,
+    scale_optimizer_lr,
+    split_model_matrix_params,
+)
 
 
-def build_optimizers(cfg, matrix_params: List[nn.Parameter], other_params: List[nn.Parameter]):
-    """Construct primary and secondary optimizers based on cfg.
-
-    Args:
-        cfg: Hydra config object with optimizer fields (primary_optimizer, lr, beta, beta2, weight_decay, ns_iters, eps).
-        matrix_params: list of 2D parameters.
-        other_params: list of non‑2D parameters.
-    Returns:
-        (primary_optimizer, secondary_optimizer) torch.optim.Optimizer instances.
-        Secondary optimizer is None when using baseline Adam or AdamW.
-    """
-    if cfg.use_baseline_adam:
-        # Use single Adam optimizer for all parameters
-        all_params = list(matrix_params) + list(other_params)
-        baseline_cfg = cfg.baseline_adam_config
-        lr = baseline_cfg.get('lr', cfg.lr)
-        weight_decay = baseline_cfg.get('weight_decay', cfg.weight_decay)
-        betas = baseline_cfg.get('betas', (cfg.beta, cfg.beta2))
-        
-        optimizer = torch.optim.AdamW(
-            params=all_params, 
-            lr=lr, 
-            weight_decay=weight_decay, 
-            betas=betas,
-            eps=cfg.eps
-        )
-        return optimizer, None  # No secondary optimizer needed
-    
-    # Check if using AdamW as primary optimizer
-    name = cfg.primary_optimizer.lower()
-    if name == 'adamw':
-        # Use single AdamW optimizer for all parameters (like baseline Adam)
-        all_params = list(matrix_params) + list(other_params)
-        betas = (cfg.beta, cfg.beta2)
-        
-        optimizer = torch.optim.AdamW(
-            params=all_params, 
-            lr=cfg.lr, 
-            betas=betas,
-            weight_decay=cfg.weight_decay, 
-            eps=cfg.eps
-        )
-        return optimizer, None  # No secondary optimizer needed
-    
-    # Custom optimizers (adamuon/muon) - use parameter splitting
-    betas = (cfg.beta, cfg.beta2)
-    if name == 'muon':
-        muon_lr = cfg.muon_lr
-        primary = Muon(params=matrix_params, lr=muon_lr, beta=betas[0], beta2=betas[1],
-                       weight_decay=cfg.weight_decay, ns_iters=cfg.ns_iters, eps=cfg.eps)
-    elif name == 'adamuon':
-        muon_lr = cfg.muon_lr
-        primary = AdaMuon(params=matrix_params, lr=muon_lr, beta=betas[0], beta2=betas[1],
-                          weight_decay=cfg.weight_decay, ns_iters=cfg.ns_iters, eps=cfg.eps)
-    else:
-        raise NotImplementedError(f"Unsupported optimizer: {cfg.primary_optimizer}")
-
-    secondary = torch.optim.AdamW(params=other_params, lr=cfg.lr, betas=betas,
-                                  weight_decay=cfg.weight_decay, eps=cfg.eps)
-    return primary, secondary
-
-
-def prepare_targets(input_ids: torch.Tensor) -> Tuple[torch.Tensor, int]:
-    """Create next‑token targets and compute effective token count (no masks).
-
-    Args:
-        input_ids: LongTensor shape [B, T], token ids.
-    Returns:
-        (targets, total_tokens) where targets is [B, T-1].
-    """
-    targets = input_ids[:, 1:]
-    total_effective = int(targets.numel())
-    return targets, total_effective
-
-
-def compute_loss_sum(model, hidden: torch.Tensor, targets: torch.Tensor, chunk_size: int, loss_fn: nn.Module) -> torch.Tensor:
-    """Compute summed CE loss across time, optionally in chunks to save memory.
-
-    Args:
-        model: model with `W_ue` projection (vocab head).
-        hidden: Tensor [B, T, E], pre‑logits states.
-        targets: LongTensor [B, T], next‑token targets with -100 for ignored.
-        chunk_size: int, max time length per chunk; 0 disables chunking.
-        loss_fn: loss module with reduction='sum'.
-    Returns:
-        Scalar tensor, total summed cross‑entropy over all non‑ignored tokens.
-    """
-    T = hidden.size(1)
-    if chunk_size <= 0 or chunk_size >= T:
-        logits = model.W_ue(hidden)
-        return loss_fn(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
-
-    loss_sum = hidden.new_tensor(0.0, dtype=torch.float32)
-    start = 0
-    while start < T:
-        end = min(start + chunk_size, T)
-        logits_chunk = model.W_ue(hidden[:, start:end, :])
-        targets_chunk = targets[:, start:end]
-        loss_sum = loss_sum + loss_fn(
-            logits_chunk.reshape(-1, logits_chunk.size(-1)),
-            targets_chunk.reshape(-1)
-        ).to(loss_sum.dtype)
-        start = end
-    return loss_sum
-
-
-def _compute_lr_scale_tokens(used_tokens: int, cfg) -> float:
-    """Compute LR scale based on token progress with warmup and schedule.
-
-    Schedules:
-    - none: linear warmup to 1.0, then flat.
-    - cosine: linear warmup, then cosine decay to min_lr_scale.
-    - linear: linear warmup, then linear decay to min_lr_scale.
-    """
-    schedule = cfg.lr_schedule
-    warmup_tokens = int(cfg.warmup_tokens or 0)
-    min_scale = float(cfg.min_lr_scale)
-    total = int(cfg.max_train_tokens or 0)
-    if total <= 0:
-        total = max(used_tokens, 1)
-
-    # Warmup
-    if warmup_tokens > 0 and used_tokens < warmup_tokens:
-        return max(0.0, min(1.0, used_tokens / max(1, warmup_tokens)))
-
-    # Post-warmup progress in [0,1]
-    post = used_tokens - warmup_tokens
-    denom = max(1, total - warmup_tokens)
-    t = max(0.0, min(1.0, post / denom))
-
-    if schedule == 'cosine':
-        import math
-        return float(min_scale + 0.5 * (1.0 - min_scale) * (1.0 + math.cos(math.pi * t)))
-    elif schedule == 'linear':
-        return float(min_scale + (1.0 - min_scale) * (1.0 - t))
-    else:  # 'none'
-        return 1.0
-
-
-def _compute_progress_t(used_tokens: int, cfg) -> float:
-    """Token-based progress t in [0,1] after warmup, for generic schedules."""
-    warmup_tokens = int(cfg.warmup_tokens or 0)
-    total = int(cfg.max_train_tokens or 0)
-    if total <= 0:
-        total = max(used_tokens, 1)
-    post = max(0, used_tokens - warmup_tokens)
-    denom = max(1, total - warmup_tokens)
-    return max(0.0, min(1.0, post / denom))
-
-
-def _schedule_value(start: float, end: float, t: float, schedule: str) -> float:
-    """Interpolate between start->end with optional cosine/linear schedule.
-
-    References:
-      - GShard (Lepikhin et al., 2020) and Switch Transformers (Fedus et al., 2021) discuss routing noise/temperature & load balancing annealing.
-    """
-    if schedule == 'linear':
-        return float(start + (end - start) * t)
-    if schedule == 'cosine':
-        import math
-        return float(end + 0.5 * (start - end) * (1.0 + math.cos(math.pi * t)))
-    return float(start)
-
-
-def training_run(cfg, model, train_loader: DataLoader, *, loss_fn: nn.Module) -> Dict[str, list]:
+def training_run(
+    cfg,
+    model: nn.Module,
+    train_loader: DataLoader,
+    *,
+    loss_fn: nn.Module,
+    val_loader: Optional[DataLoader] = None,
+) -> Dict[str, list]:
     """Functional training loop until reaching token budget.
 
     Args:
@@ -254,24 +42,41 @@ def training_run(cfg, model, train_loader: DataLoader, *, loss_fn: nn.Module) ->
              logits_chunk_size, max_train_tokens, debug_memory.
         model: nn.Module with `forward_hidden` and `W_ue` attributes.
         train_loader: DataLoader yielding dicts with 'input_ids'.
-        loss_fn: nn.CrossEntropyLoss(reduction='sum') for per‑token normalization.
+        loss_fn: nn.CrossEntropyLoss(reduction='sum') for per-token normalization.
     Returns:
-        stats: dict with key 'train_loss' (list of averaged per‑token losses per accumulation window).
+        stats: dict with key 'train_loss' (list of averaged per-token losses per accumulation window).
     """
+
     import wandb
 
-    matrix_params, other_params = split_model_matrix_params(model.named_parameters(), model=model, cfg=cfg)
-    # Log optimizer wiring if requested
+    matrix_params, other_params = split_model_matrix_params(
+        model.named_parameters(), model=model, cfg=cfg
+    )
     if cfg.log_implementation_details:
-        def _summarize(ps):
-            return [tuple(p.shape) for p in ps][:10]
-        print("[opt-wiring] muon-eligible (hidden 2D) count:", len(matrix_params), "sample shapes:", _summarize(matrix_params))
-        print("[opt-wiring] adamw params (embeddings, head, biases, etc.) count:", len(other_params), "sample shapes:", _summarize(other_params))
+        # quick summary of which parameter sets are optimized by which optimizer
+        def _summarize(params):
+            return [tuple(p.shape) for p in params][:10]
+
+        print(
+            "[opt-wiring] muon-eligible (hidden 2D) count:",
+            len(matrix_params),
+            "sample shapes:",
+            _summarize(matrix_params),
+        )
+        print(
+            "[opt-wiring] adamw params (embeddings, head, biases, etc.) count:",
+            len(other_params),
+            "sample shapes:",
+            _summarize(other_params),
+        )
     opt_primary, opt_secondary = build_optimizers(cfg, matrix_params, other_params)
 
-    # Capture base LRs for scheduling
-    primary_base_lr = float(opt_primary.param_groups[0]['lr']) if opt_primary is not None else 0.0
-    secondary_base_lr = float(opt_secondary.param_groups[0]['lr']) if opt_secondary is not None else 0.0
+    primary_base_lr = (
+        float(opt_primary.param_groups[0]["lr"]) if opt_primary is not None else 0.0
+    )
+    secondary_base_lr = (
+        float(opt_secondary.param_groups[0]["lr"]) if opt_secondary is not None else 0.0
+    )
 
     model.to(cfg.device)
     model.train()
@@ -284,23 +89,35 @@ def training_run(cfg, model, train_loader: DataLoader, *, loss_fn: nn.Module) ->
     step_in_accum = 0
     accum_loss_sum = 0.0
     accum_token_count = 0
+    last_eval_tokens = 0
 
     stop_training = False
     while used_tokens < cfg.max_train_tokens and not stop_training:
         for idx, batch in enumerate(train_loader):
-            input_ids = batch['input_ids'].to(cfg.device)
-            # Attention masks are not used when training on packed sequences
+            input_ids = batch["input_ids"].to(cfg.device)
 
-            ctx = autocast(device_type='cuda', dtype=torch.bfloat16) if (cfg.device == 'cuda' and torch.cuda.is_available()) else contextlib.nullcontext()
+            ctx = (
+                autocast(device_type="cuda", dtype=torch.bfloat16)
+                if (cfg.device == "cuda" and torch.cuda.is_available())
+                else contextlib.nullcontext()
+            )
             with ctx:
                 hidden = model.forward_hidden(input_ids)
                 hidden = hidden[:, :-1, :]
                 targets, effective = prepare_targets(input_ids)
-                loss_sum = compute_loss_sum(model, hidden, targets, cfg.logits_chunk_size, loss_fn)
+                loss_sum = compute_loss_sum(
+                    model, hidden, targets, cfg.logits_chunk_size, loss_fn
+                )
                 per_token_loss = loss_sum / max(1, effective)
 
-                aux = model.moe_aux_loss() if hasattr(model, "moe_aux_loss") else hidden.new_tensor(0.0, dtype=torch.float32)
-                total_loss = per_token_loss + float(cfg.moe_lb_coef) * aux.to(per_token_loss.dtype)
+                aux = (
+                    model.moe_aux_loss()
+                    if hasattr(model, "moe_aux_loss")
+                    else hidden.new_tensor(0.0, dtype=torch.float32)
+                )
+                total_loss = per_token_loss + float(cfg.moe_lb_coef) * aux.to(
+                    per_token_loss.dtype
+                )
 
                 loss = total_loss / cfg.accum_steps
 
@@ -312,74 +129,92 @@ def training_run(cfg, model, train_loader: DataLoader, *, loss_fn: nn.Module) ->
             used_tokens += int(effective)
 
             if step_in_accum == cfg.accum_steps:
-                nn.utils.clip_grad_norm_(model.parameters(), max_norm=cfg.grad_clip_norm)
-                # LR scheduling based on tokens
-                lr_scale = _compute_lr_scale_tokens(used_tokens, cfg)
-                # Optional annealing for MoE hyperparameters
-                t = _compute_progress_t(used_tokens, cfg)
-                # Router temperature
-                temp = _schedule_value(
-                    float(cfg.moe_router_temp_start),
-                    float(cfg.moe_router_temp_end),
-                    t,
-                    cfg.moe_router_temp_schedule,
+                import time
+
+                _t0 = time.time()
+                nn.utils.clip_grad_norm_(
+                    model.parameters(), max_norm=cfg.grad_clip_norm
                 )
-                # Router noise
-                noise = _schedule_value(
-                    float(cfg.moe_router_noise_start),
-                    float(cfg.moe_router_noise_end),
-                    t,
-                    cfg.moe_router_noise_schedule,
-                )
-                # Load-balance coef used below when computing loss for next window
-                lb_coef = _schedule_value(
-                    float(cfg.moe_lb_coef_start),
-                    float(cfg.moe_lb_coef_end),
-                    t,
-                    cfg.moe_lb_coef_schedule,
-                )
-                try:
-                    from scaletraining.model.model import MoELayer  # local import to avoid circularity
-                    for m in model.modules():
-                        if isinstance(m, MoELayer):
-                            m.router_temp = float(temp)
-                            m.router_noise = float(noise)
-                    cfg.moe_lb_coef = float(lb_coef)
-                except Exception:
-                    pass
-                # Apply scaled LRs
-                if opt_primary is not None:
-                    for g in opt_primary.param_groups:
-                        g['lr'] = primary_base_lr * lr_scale
-                if opt_secondary is not None:
-                    for g in opt_secondary.param_groups:
-                        g['lr'] = secondary_base_lr * lr_scale
+                lr_scale = compute_lr_scale_tokens(used_tokens, cfg)
+                progress_t = compute_progress_t(used_tokens, cfg)
+                cfg.moe_lb_coef = apply_moe_schedules(model, cfg, progress_t)
+
+                scale_optimizer_lr(opt_primary, primary_base_lr, lr_scale)
+                scale_optimizer_lr(opt_secondary, secondary_base_lr, lr_scale)
 
                 opt_primary.step()
                 if opt_secondary is not None:
                     opt_secondary.step()
-                
+
                 opt_primary.zero_grad(set_to_none=True)
                 if opt_secondary is not None:
                     opt_secondary.zero_grad(set_to_none=True)
                 step_in_accum = 0
 
                 avg_loss = accum_loss_sum / max(1, accum_token_count)
-                stats['train_loss'].append(avg_loss)
+                stats["train_loss"].append(avg_loss)
                 try:
-                    current_lr = opt_primary.param_groups[0]['lr'] if opt_primary is not None else 0.0
+                    current_lr = (
+                        opt_primary.param_groups[0]["lr"]
+                        if opt_primary is not None
+                        else 0.0
+                    )
                 except Exception:
                     current_lr = 0.0
-                print(f"Tokens: {used_tokens:,}, Loss: {avg_loss:.4f}, LR: {current_lr:.6g}")
-                wandb.log({'used tokens': used_tokens, 'train_per_token_loss': avg_loss, 'lr': current_lr}, step=used_tokens)
+                elapsed = max(1e-6, time.time() - _t0)
+                tps = accum_token_count / elapsed if accum_token_count > 0 else 0.0
+                print(
+                    f"Tokens: {used_tokens:,}, Loss: {avg_loss:.4f}, LR: {current_lr:.6g}, tok/s: {tps:.0f}"
+                )
+                wandb.log(
+                    {
+                        "used tokens": used_tokens,
+                        "train_per_token_loss": avg_loss,
+                        "lr": current_lr,
+                        "throughput_tokens_per_s": tps,
+                    },
+                    step=used_tokens,
+                )
                 accum_loss_sum = 0.0
                 accum_token_count = 0
+
+                try:
+                    eval_interval = int(getattr(cfg, "eval_interval_tokens", 0))
+                    max_val_batches = int(getattr(cfg, "eval_max_batches", 0))
+                except Exception:
+                    eval_interval, max_val_batches = 0, 0
+                if (
+                    val_loader is not None
+                    and eval_interval > 0
+                    and (used_tokens - last_eval_tokens) >= eval_interval
+                ):
+                    v_loss, v_ppl = evaluate_perplexity(
+                        model,
+                        val_loader,
+                        cfg,
+                        loss_fn,
+                        max_batches=max_val_batches,
+                    )
+                    print(
+                        f"[eval] tokens={used_tokens:,} val_loss={v_loss:.4f} val_ppl={v_ppl:.3f}"
+                    )
+                    wandb.log(
+                        {
+                            "used tokens": used_tokens,
+                            "valid_per_token_loss": v_loss,
+                            "valid_ppl": v_ppl,
+                        },
+                        step=used_tokens,
+                    )
+                    last_eval_tokens = used_tokens
 
             if cfg.debug_memory and torch.cuda.is_available() and (idx % 100 == 0):
                 try:
                     peak_alloc = torch.cuda.max_memory_allocated() / (1024**2)
                     peak_reserv = torch.cuda.max_memory_reserved() / (1024**2)
-                    print(f"peak MB after step: alloc={peak_alloc:.2f}, reserved={peak_reserv:.2f}")
+                    print(
+                        f"peak MB after step: alloc={peak_alloc:.2f}, reserved={peak_reserv:.2f}"
+                    )
                 except Exception:
                     pass
 
@@ -388,3 +223,47 @@ def training_run(cfg, model, train_loader: DataLoader, *, loss_fn: nn.Module) ->
                 break
 
     return stats
+
+
+@torch.inference_mode()
+def evaluate_perplexity(
+    model: nn.Module,
+    data_loader: DataLoader,
+    cfg,
+    loss_fn: nn.Module,
+    *,
+    max_batches: int = 0,
+) -> Tuple[float, float]:
+    """Evaluate average per-token loss and perplexity on a data loader."""
+
+    was_training = model.training
+    model.eval()
+    total_loss = 0.0
+    total_tokens = 0
+    batches_seen = 0
+    for batch in data_loader:
+        input_ids = batch["input_ids"].to(cfg.device)
+        context = (
+            autocast(device_type="cuda", dtype=torch.bfloat16)
+            if (cfg.device == "cuda" and torch.cuda.is_available())
+            else contextlib.nullcontext()
+        )
+        with context:
+            hidden = model.forward_hidden(input_ids)[:, :-1, :]
+            targets, effective = prepare_targets(input_ids)
+            loss_sum = compute_loss_sum(
+                model, hidden, targets, getattr(cfg, "logits_chunk_size", 0), loss_fn
+            )
+        total_loss += float(loss_sum.item())
+        total_tokens += int(effective)
+        batches_seen += 1
+        if max_batches and batches_seen >= max_batches:
+            break
+    avg = (total_loss / max(1, total_tokens)) if total_tokens > 0 else float("inf")
+    ppl = math.exp(min(50.0, max(-50.0, avg))) if avg != float("inf") else float("inf")
+    if was_training:
+        model.train()
+    return avg, ppl
+
+
+__all__ = ["training_run", "evaluate_perplexity"]

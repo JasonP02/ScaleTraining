@@ -88,7 +88,7 @@ def main(cfg: DictConfig) -> float:
     )
 
     # Training loop
-    stats = training_run(flat, model, train_loader, loss_fn=loss_fn)
+    stats = training_run(flat, model, train_loader, loss_fn=loss_fn, val_loader=val_loader)
 
     # Save model locally only
     run_dir = save_model(model, flat, flat.output_dir)
