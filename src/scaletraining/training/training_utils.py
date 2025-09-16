@@ -275,3 +275,21 @@ __all__ = [
     "apply_moe_schedules",
     "scale_optimizer_lr",
 ]
+
+def estimate_flops(tokens_used, d_model, d_hidden, n_heads, seq_len,
+                   n_layers, n_moe_layers, top_k, n_experts, using_moe, capacity=1.0,
+                   optimizer_factor=6.0):
+    d_head = d_model // n_heads
+    active_params = n_layers * (3 * d_model * d_model + d_model * d_model)  # QKV + proj
+    dense_mlp = 2 * d_model * d_hidden
+    if using_moe and n_moe_layers:
+        expert_params = top_k * capacity * 2 * d_model * d_hidden
+        active_params += (n_layers - n_moe_layers) * dense_mlp + n_moe_layers * expert_params
+        router_params = n_moe_layers * d_model * n_experts
+    else:
+        active_params += n_layers * dense_mlp
+        router_params = 0
+
+    attn_matmul = 12 * n_layers * n_heads * d_head * seq_len
+    per_token = optimizer_factor * (active_params + router_params) + attn_matmul
+    return per_token * tokens_used
