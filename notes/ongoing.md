@@ -1,5 +1,5 @@
 Working on:
-Loss vs flops
+Implementing the flops estimation into training/evals.
 
 Next task:
 perplexity vs context length.
