@@ -7,14 +7,14 @@ Each function has a narrow purpose and explicit inputs/outputs.
 from __future__ import annotations
 
 import contextlib
-import math
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
 from torch.amp import autocast
 from torch.utils.data import DataLoader
 
+from scaletraining.evals import evaluate_perplexity
 from scaletraining.training.training_utils import (
     apply_moe_schedules,
     build_optimizers,
@@ -24,7 +24,9 @@ from scaletraining.training.training_utils import (
     prepare_targets,
     scale_optimizer_lr,
     split_model_matrix_params,
+    log_implementation
 )
+from scaletraining.util.wandb_utils import log_eval_metrics, log_train_metrics
 
 
 def training_run(
@@ -47,36 +49,16 @@ def training_run(
         stats: dict with key 'train_loss' (list of averaged per-token losses per accumulation window).
     """
 
-    import wandb
-
     matrix_params, other_params = split_model_matrix_params(
         model.named_parameters(), model=model, cfg=cfg
     )
     if cfg.log_implementation_details:
-        # quick summary of which parameter sets are optimized by which optimizer
-        def _summarize(params):
-            return [tuple(p.shape) for p in params][:10]
-
-        print(
-            "[opt-wiring] muon-eligible (hidden 2D) count:",
-            len(matrix_params),
-            "sample shapes:",
-            _summarize(matrix_params),
-        )
-        print(
-            "[opt-wiring] adamw params (embeddings, head, biases, etc.) count:",
-            len(other_params),
-            "sample shapes:",
-            _summarize(other_params),
-        )
+        log_implementation(matrix_params, other_params)
+        
     opt_primary, opt_secondary = build_optimizers(cfg, matrix_params, other_params)
 
-    primary_base_lr = (
-        float(opt_primary.param_groups[0]["lr"]) if opt_primary is not None else 0.0
-    )
-    secondary_base_lr = (
-        float(opt_secondary.param_groups[0]["lr"]) if opt_secondary is not None else 0.0
-    )
+    primary_base_lr = (float(opt_primary.param_groups[0]["lr"]) if opt_primary is not None else 0.0)
+    secondary_base_lr = (float(opt_secondary.param_groups[0]["lr"]) if opt_secondary is not None else 0.0)
 
     model.to(cfg.device)
     model.train()
@@ -115,9 +97,7 @@ def training_run(
                     if hasattr(model, "moe_aux_loss")
                     else hidden.new_tensor(0.0, dtype=torch.float32)
                 )
-                total_loss = per_token_loss + float(cfg.moe_lb_coef) * aux.to(
-                    per_token_loss.dtype
-                )
+                total_loss = per_token_loss + float(cfg.moe_lb_coef) * aux.to(per_token_loss.dtype)
 
                 loss = total_loss / cfg.accum_steps
 
@@ -132,9 +112,7 @@ def training_run(
                 import time
 
                 _t0 = time.time()
-                nn.utils.clip_grad_norm_(
-                    model.parameters(), max_norm=cfg.grad_clip_norm
-                )
+                nn.utils.clip_grad_norm_(model.parameters(), max_norm=cfg.grad_clip_norm)
                 lr_scale = compute_lr_scale_tokens(used_tokens, cfg)
                 progress_t = compute_progress_t(used_tokens, cfg)
                 cfg.moe_lb_coef = apply_moe_schedules(model, cfg, progress_t)
@@ -153,38 +131,25 @@ def training_run(
 
                 avg_loss = accum_loss_sum / max(1, accum_token_count)
                 stats["train_loss"].append(avg_loss)
-                try:
-                    current_lr = (
-                        opt_primary.param_groups[0]["lr"]
-                        if opt_primary is not None
-                        else 0.0
-                    )
-                except Exception:
-                    current_lr = 0.0
+                current_lr = (opt_primary.param_groups[0]["lr"] if opt_primary is not None else 0.0)
                 elapsed = max(1e-6, time.time() - _t0)
                 tps = accum_token_count / elapsed if accum_token_count > 0 else 0.0
                 print(
                     f"Tokens: {used_tokens:,}, Loss: {avg_loss:.4f}, LR: {current_lr:.6g}, tok/s: {tps:.0f}"
                 )
-                wandb.log(
-                    {
-                        "used tokens": used_tokens,
-                        "train_per_token_loss": avg_loss,
-                        "lr": current_lr,
-                        "throughput_tokens_per_s": tps,
-                    },
-                    step=used_tokens,
+                log_train_metrics(
+                    used_tokens=used_tokens,
+                    loss=avg_loss,
+                    lr=current_lr,
+                    throughput=tps,
                 )
                 accum_loss_sum = 0.0
                 accum_token_count = 0
 
-                try:
-                    eval_interval = int(getattr(cfg, "eval_interval_tokens", 0))
-                    max_val_batches = int(getattr(cfg, "eval_max_batches", 0))
-                except Exception:
-                    eval_interval, max_val_batches = 0, 0
-                if (
-                    val_loader is not None
+                eval_interval = cfg.eval_interval_tokens
+                max_val_batches = cfg.eval_max_batches
+
+                if (val_loader is not None
                     and eval_interval > 0
                     and (used_tokens - last_eval_tokens) >= eval_interval
                 ):
@@ -195,16 +160,11 @@ def training_run(
                         loss_fn,
                         max_batches=max_val_batches,
                     )
-                    print(
-                        f"[eval] tokens={used_tokens:,} val_loss={v_loss:.4f} val_ppl={v_ppl:.3f}"
-                    )
-                    wandb.log(
-                        {
-                            "used tokens": used_tokens,
-                            "valid_per_token_loss": v_loss,
-                            "valid_ppl": v_ppl,
-                        },
-                        step=used_tokens,
+                    print(f"[eval] tokens={used_tokens:,} val_loss={v_loss:.4f} val_ppl={v_ppl:.3f}")
+                    log_eval_metrics(
+                        used_tokens=used_tokens,
+                        val_loss=v_loss,
+                        val_perplexity=v_ppl,
                     )
                     last_eval_tokens = used_tokens
 
@@ -224,46 +184,4 @@ def training_run(
 
     return stats
 
-
-@torch.inference_mode()
-def evaluate_perplexity(
-    model: nn.Module,
-    data_loader: DataLoader,
-    cfg,
-    loss_fn: nn.Module,
-    *,
-    max_batches: int = 0,
-) -> Tuple[float, float]:
-    """Evaluate average per-token loss and perplexity on a data loader."""
-
-    was_training = model.training
-    model.eval()
-    total_loss = 0.0
-    total_tokens = 0
-    batches_seen = 0
-    for batch in data_loader:
-        input_ids = batch["input_ids"].to(cfg.device)
-        context = (
-            autocast(device_type="cuda", dtype=torch.bfloat16)
-            if (cfg.device == "cuda" and torch.cuda.is_available())
-            else contextlib.nullcontext()
-        )
-        with context:
-            hidden = model.forward_hidden(input_ids)[:, :-1, :]
-            targets, effective = prepare_targets(input_ids)
-            loss_sum = compute_loss_sum(
-                model, hidden, targets, getattr(cfg, "logits_chunk_size", 0), loss_fn
-            )
-        total_loss += float(loss_sum.item())
-        total_tokens += int(effective)
-        batches_seen += 1
-        if max_batches and batches_seen >= max_batches:
-            break
-    avg = (total_loss / max(1, total_tokens)) if total_tokens > 0 else float("inf")
-    ppl = math.exp(min(50.0, max(-50.0, avg))) if avg != float("inf") else float("inf")
-    if was_training:
-        model.train()
-    return avg, ppl
-
-
-__all__ = ["training_run", "evaluate_perplexity"]
+__all__ = ["training_run"]

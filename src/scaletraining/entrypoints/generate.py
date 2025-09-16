@@ -15,7 +15,7 @@ import torch
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 from scaletraining.model.model import TransformerNetwork
-from scaletraining.util.utils import resolve_device, flatten_cfg, find_latest_model_path
+from scaletraining.util import find_latest_model_path, flatten_cfg, resolve_device
 from scaletraining.inference.generation import generate_autoregressive
 
 

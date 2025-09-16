@@ -141,7 +141,23 @@ def prepare_targets(input_ids: torch.Tensor) -> Tuple[torch.Tensor, int]:
     total_effective = int(targets.numel())
     return targets, total_effective
 
+def log_implementation(matrix_params, other_params):
+    # quick summary of which parameter sets are optimized by which optimizer
+    def _summarize(params):
+        return [tuple(p.shape) for p in params][:10]
 
+    print(
+        "[opt-wiring] muon-eligible (hidden 2D) count:",
+        len(matrix_params),
+        "sample shapes:",
+        _summarize(matrix_params),
+    )
+    print(
+        "[opt-wiring] adamw params (embeddings, head, biases, etc.) count:",
+        len(other_params),
+        "sample shapes:",
+        _summarize(other_params),
+    )
 def compute_loss_sum(
     model: nn.Module,
     hidden: torch.Tensor,

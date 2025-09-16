@@ -70,7 +70,7 @@ def get_dataset_text_files(cfg: DictConfig) -> list[str]:
     
     return text_files
 
-from scaletraining.util.utils import flatten_cfg
+from scaletraining.util import flatten_cfg
 
 def train_tokenizer_from_cfg(cfg: DictConfig) -> str:
     """Train a dataset-specific tokenizer in-process and return its save path.

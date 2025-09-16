@@ -15,15 +15,16 @@ import torch.nn as nn
 
 from scaletraining.data_processing import build_loaders
 from scaletraining.model import TransformerNetwork
-from scaletraining.util import configure_rocm_and_sdp, clear_cuda_cache
-from scaletraining.util.utils import (
-    init_wandb,
-    save_model,
-    resolve_device,
+from scaletraining.util import (
+    clear_cuda_cache,
+    configure_rocm_and_sdp,
     flatten_cfg,
-    tokenized_dir,
+    init_wandb,
     packed_dir,
     read_metadata,
+    resolve_device,
+    save_model,
+    tokenized_dir,
 )
 from scaletraining.training.loop import training_run
 from scaletraining.inference.generation import generate_autoregressive

@@ -3,7 +3,9 @@ from transformers import AutoTokenizer
 from typing import Dict, Any, List
 import hydra
 from omegaconf import DictConfig
-from scaletraining.util.utils import tokenized_dir, write_metadata, _cfg_subset, flatten_cfg
+from scaletraining.util.artifacts import write_metadata
+from scaletraining.util.config import _cfg_subset, flatten_cfg
+from scaletraining.util.paths import tokenized_dir
 from pathlib import Path
 
 

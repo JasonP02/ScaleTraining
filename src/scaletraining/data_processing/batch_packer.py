@@ -2,7 +2,9 @@ from itertools import chain
 from datasets import load_from_disk
 import hydra
 from omegaconf import DictConfig
-from scaletraining.util.utils import write_metadata, tokenized_dir, packed_dir, _cfg_subset, flatten_cfg
+from scaletraining.util.artifacts import write_metadata
+from scaletraining.util.config import _cfg_subset, flatten_cfg
+from scaletraining.util.paths import packed_dir, tokenized_dir
 
 def group_texts(examples, block_size: int):
     '''

@@ -2,7 +2,9 @@ from torch.utils.data import DataLoader
 from datasets import load_from_disk
 from scaletraining.data_processing.batch_packer import pack_and_save
 from scaletraining.data_processing.tokenization import tokenize_dataset
-from scaletraining.util.utils import tokenized_dir, packed_dir, read_metadata, _cfg_subset
+from scaletraining.util.artifacts import read_metadata
+from scaletraining.util.config import _cfg_subset
+from scaletraining.util.paths import packed_dir, tokenized_dir
 import os
 
 def build_loaders(cfg):

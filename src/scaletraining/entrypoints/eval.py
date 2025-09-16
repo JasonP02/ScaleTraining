@@ -15,10 +15,10 @@ from omegaconf import DictConfig
 import torch
 import torch.nn as nn
 
-from scaletraining.util.utils import resolve_device, flatten_cfg
+from scaletraining.util import flatten_cfg, resolve_device
 from scaletraining.data_processing import build_loaders
 from scaletraining.model import TransformerNetwork
-from scaletraining.training.loop import evaluate_perplexity
+from scaletraining.evals import evaluate_perplexity
 
 
 @hydra.main(version_base=None, config_path=str(Path(__file__).parent.parent.parent.parent / "conf"), config_name="config")
@@ -42,4 +42,3 @@ def main(cfg: DictConfig) -> None:
 
 if __name__ == "__main__":
     main()
-
