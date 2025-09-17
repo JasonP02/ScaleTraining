@@ -109,19 +109,6 @@ def training_run(
 
             used_tokens += int(effective)
 
-            if idx % 100 == 0:
-                flops_used = estimate_flops(
-                    tokens_used=used_tokens,
-                    d_model=cfg.n_embed,
-                    d_hidden=cfg.n_hidden,
-                    n_heads=cfg.n_head,
-                    seq_len=cfg.max_seq_len,
-                    n_layers=cfg.n_layer,
-                    n_moe_layers=cfg.moe_n_layers,
-                    top_k=cfg.moe_top_k,
-                    n_experts=cfg.moe_n_experts,
-                    using_moe=cfg.use_moe
-                )
 
             if step_in_accum == cfg.accum_steps:
                 import time
@@ -149,6 +136,17 @@ def training_run(
                 current_lr = (opt_primary.param_groups[0]["lr"] if opt_primary is not None else 0.0)
                 elapsed = max(1e-6, time.time() - _t0)
                 tps = accum_token_count / elapsed if accum_token_count > 0 else 0.0
+                flops_used = estimate_flops(
+                    tokens_used=used_tokens,
+                    d_model=cfg.n_embed,
+                    d_hidden=cfg.n_hidden,
+                    n_heads=cfg.n_head,
+                    seq_len=cfg.max_seq_len,
+                    n_layers=cfg.n_layer,
+                    n_moe_layers=cfg.moe_n_layers,
+                    top_k=cfg.moe_top_k,
+                    n_experts=cfg.moe_n_experts,
+                    using_moe=cfg.use_moe)
                 print(
                     f"Tokens: {used_tokens:,}, Loss: {avg_loss:.4f}, LR: {current_lr:.6g}, tok/s: {tps:.0f}"
                 )

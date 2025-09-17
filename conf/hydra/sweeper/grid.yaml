@@ -2,5 +2,5 @@
 _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
 max_batch_size: null
 params:
-  model.attn_dropout: 0.0, 0.1
-  model.resid_dropout: 0.0, 0.1
+  model.attn_dropout: 0.0, 0.1, 0.5, 1
+  model.resid_dropout: 0.0, 0.1, 0.5, 1
