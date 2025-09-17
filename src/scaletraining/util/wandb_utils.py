@@ -1,24 +1,24 @@
 """Helper routines for structured Weights & Biases logging."""
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Mapping, MutableMapping, Optional
+from pathlib import Path as PathLib
+import typing as t
 
 
 try:  # Lazy optional dependency
-    import wandb  # type: ignore
+    import wandb as wandb_sdk  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - logging simply becomes a no-op
-    wandb = None  # type: ignore
+    wandb_sdk = None  # type: ignore
 
 
-def _log(metrics: Mapping[str, float], *, step: Optional[int] = None) -> None:
+def _log(metrics: t.Mapping[str, float], *, step: t.Optional[int] = None) -> None:
     """Safely dispatch metrics to W&B if the library is available."""
 
-    if wandb is None or not metrics:
+    if wandb_sdk is None or not metrics:
         return
     # wandb.log mutates the dict, so pass a shallow copy.
-    payload: MutableMapping[str, float] = dict(metrics)
-    wandb.log(payload, step=step)
+    payload: t.MutableMapping[str, float] = dict(metrics)
+    wandb_sdk.log(payload, step=step)
 
 
 def log_train_metrics(
@@ -59,16 +59,14 @@ def log_eval_metrics(
     )
 
 
-
-
-def init_wandb(cfg: Any, config_dict: Optional[Mapping[str, Any]] = None) -> None:
+def init_wandb(cfg: t.Any, config_dict: t.Optional[t.Mapping[str, t.Any]] = None) -> None:
     """Initialise W&B with descriptive names derived from the tokenizer."""
 
-    if wandb is None:
+    if wandb_sdk is None:
         return
 
     tokenizer_name = getattr(cfg, "tokenizer_name", "unknown")
-    token_path = Path(tokenizer_name)
+    token_path = PathLib(tokenizer_name)
     is_custom = token_path.exists() and token_path.suffix == ".json"
 
     if is_custom:
@@ -84,7 +82,7 @@ def init_wandb(cfg: Any, config_dict: Optional[Mapping[str, Any]] = None) -> Non
             name_suffix = tokenizer_name.split("/")[-1] if "/" in tokenizer_name else tokenizer_name
         tags = ["hf_tokenizer"]
 
-    wandb.init(
+    wandb_sdk.init(
         project=cfg.wandb_project_name,
         config=dict(config_dict) if config_dict is not None else None,
         reinit=True,

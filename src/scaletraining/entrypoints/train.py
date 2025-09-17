@@ -26,7 +26,7 @@ from scaletraining.util import (
     save_model,
     tokenized_dir,
 )
-from scaletraining.training.loop import training_run
+from scaletraining.model.train import training_run
 from scaletraining.inference.generation import generate_autoregressive
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 

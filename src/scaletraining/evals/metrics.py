@@ -10,7 +10,7 @@ import torch.nn as nn
 from torch.amp import autocast
 from torch.utils.data import DataLoader
 
-from scaletraining.training.training_utils import compute_loss_sum, prepare_targets
+from scaletraining.util.training_utils import compute_loss_sum, prepare_targets
 
 
 @torch.inference_mode()

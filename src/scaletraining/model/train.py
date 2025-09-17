@@ -15,7 +15,7 @@ from torch.amp import autocast
 from torch.utils.data import DataLoader
 
 from scaletraining.evals import evaluate_perplexity
-from scaletraining.training.training_utils import (
+from scaletraining.util.training_utils import (
     apply_moe_schedules,
     build_optimizers,
     compute_loss_sum,
@@ -183,5 +183,3 @@ def training_run(
                 break
 
     return stats
-
-__all__ = ["training_run"]
