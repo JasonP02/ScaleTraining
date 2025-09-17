@@ -31,7 +31,7 @@ def config_fingerprint(cfg: Any) -> str:
 
 
 def flatten_cfg(cfg: Any) -> Any:
-    """Flatten namespaced Hydra config groups into a SimpleNamespace."""
+    """Flatten namespaced Hydra config groups for ease of use"""
 
     from types import SimpleNamespace
 

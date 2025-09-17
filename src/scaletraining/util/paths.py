@@ -8,11 +8,12 @@ from .config import config_fingerprint
 
 
 def _sanitize(value: str) -> str:
+    """Helper for filepaths and such"""
     return str(value).replace("/", "-").replace(" ", "_")
 
 
 def tokenized_dir(cfg: Any) -> str:
-    """Return the canonical directory path for tokenized shards."""
+    """Return the path for tokenized shards."""
 
     fingerprint = config_fingerprint(cfg)[:8]
     base = cfg.tokenized_path
@@ -26,7 +27,7 @@ def tokenized_dir(cfg: Any) -> str:
 
 
 def packed_dir(cfg: Any) -> str:
-    """Return the canonical directory path for packed batches."""
+    """Return the directory path for packed batches."""
 
     fingerprint = config_fingerprint(cfg)[:8]
     base = cfg.batched_tokenized_path

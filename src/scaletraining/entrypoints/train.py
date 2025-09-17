@@ -12,6 +12,7 @@ import json
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import torch.nn as nn
+import torch
 
 from scaletraining.data_processing import build_loaders
 from scaletraining.model import TransformerNetwork
@@ -26,7 +27,7 @@ from scaletraining.util import (
     save_model,
     tokenized_dir,
 )
-from scaletraining.model.train import training_run
+from scaletraining.model.training_loop import training_run
 from scaletraining.inference.generation import generate_autoregressive
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
@@ -35,12 +36,8 @@ from transformers import AutoTokenizer, PreTrainedTokenizerFast
 def main(cfg: DictConfig) -> float:
     """
     Train the model using Hydra config and log to W&B.
-
-    Args:
-        cfg: Hydra DictConfig with fields matching the previous Config dataclass.
-             Access via attribute syntax, e.g., cfg.batch_size. See conf/config.yaml.
     """
-    # Flatten namespaced Hydra config for modules expecting flat keys
+    # Keep both the Hydra config (for metadata) and a flattened namespace for modules that expect attrs.
     flat = flatten_cfg(cfg)
 
     # Resolve device, configure kernels, and free any stale CUDA cache
@@ -48,10 +45,8 @@ def main(cfg: DictConfig) -> float:
     configure_rocm_and_sdp(flat)
     clear_cuda_cache()
 
-    # Initialize W&B early, logging the full resolved config
     init_wandb(flat, OmegaConf.to_container(cfg, resolve=True))
 
-    # Build data
     train_loader, val_loader = build_loaders(flat)
 
     # Update W&B run name based on the dataset-specific tokenizer actually used
@@ -74,13 +69,8 @@ def main(cfg: DictConfig) -> float:
 
     # Model + loss
     model = TransformerNetwork(flat)
-    # Enable PyTorch 2.x compilation when available
-    try:
-        import torch
-        if hasattr(torch, "compile"):
-            model = torch.compile(model, mode="max-autotune")
-    except Exception as e:
-        print(f"torch.compile disabled: {e}")
+    # Compile model for massive speedups
+    model = torch.compile(model, mode="max-autotune")
     loss_fn = nn.CrossEntropyLoss(reduction='sum')  # summed CE, normalized per token in loop
 
     # Sanity check embedding size vs vocab size after metadata auto-set

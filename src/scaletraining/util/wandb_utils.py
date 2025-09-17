@@ -27,6 +27,7 @@ def log_train_metrics(
     loss: float,
     lr: float,
     throughput: float,
+    flops_used: float,
 ) -> None:
     """Log core training-loop statistics keyed by total tokens processed."""
 
@@ -36,6 +37,7 @@ def log_train_metrics(
             "train_per_token_loss": loss,
             "lr": lr,
             "throughput_tokens_per_s": throughput,
+            "FLOPs": flops_used,
         },
         step=used_tokens,
     )

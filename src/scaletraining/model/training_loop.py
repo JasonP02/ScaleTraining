@@ -24,7 +24,8 @@ from scaletraining.util.training_utils import (
     prepare_targets,
     scale_optimizer_lr,
     split_model_matrix_params,
-    log_implementation
+    log_implementation,
+    estimate_flops
 )
 from scaletraining.util.wandb_utils import log_eval_metrics, log_train_metrics
 
@@ -108,6 +109,20 @@ def training_run(
 
             used_tokens += int(effective)
 
+            if idx % 100 == 0:
+                flops_used = estimate_flops(
+                    tokens_used=used_tokens,
+                    d_model=cfg.n_embed,
+                    d_hidden=cfg.n_hidden,
+                    n_heads=cfg.n_head,
+                    seq_len=cfg.max_seq_len,
+                    n_layers=cfg.n_layer,
+                    n_moe_layers=cfg.moe_n_layers,
+                    top_k=cfg.moe_top_k,
+                    n_experts=cfg.moe_n_experts,
+                    using_moe=cfg.use_moe
+                )
+
             if step_in_accum == cfg.accum_steps:
                 import time
 
@@ -142,6 +157,7 @@ def training_run(
                     loss=avg_loss,
                     lr=current_lr,
                     throughput=tps,
+                    flops_used = flops_used
                 )
                 accum_loss_sum = 0.0
                 accum_token_count = 0

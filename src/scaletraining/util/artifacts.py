@@ -23,6 +23,7 @@ def write_metadata(path: str, data: Dict[str, Any]) -> None:
 
 
 def read_metadata(path: str) -> Dict[str, Any]:
+    """Used across codebase for validating the similarity of run config to existing data, tokenizers, etc"""
     try:
         with open(os.path.join(path, "metadata.json"), "r", encoding="utf-8") as handle:
             return json.load(handle)
@@ -32,6 +33,7 @@ def read_metadata(path: str) -> Dict[str, Any]:
 
 
 def save_run_manifest(cfg: Any, out_dir: str, extra: Optional[Dict[str, Any]] = None) -> str:
+    """Used for saving the model configuration"""
     os.makedirs(out_dir, exist_ok=True)
     manifest = {
         "time": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -103,8 +105,10 @@ def save_model(model: torch.nn.Module, cfg: Any, out_root: Optional[str] = None)
 
 
 def find_latest_model_path(output_root: str) -> Optional[str]:
-    """Return path to the newest \"model.pt\" under `output_root`, if present."""
-
+    """
+    Return path to the newest \"model.pt\" under `output_root`, if present.
+    Used for model generation
+    """
     try:
         root = Path(output_root)
         if not root.exists():

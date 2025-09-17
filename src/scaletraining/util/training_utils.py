@@ -31,6 +31,10 @@ def split_model_matrix_params(
                 pass
 
     def excluded_from_muon(name: str, p: nn.Parameter) -> bool:
+        """
+        Muon and AdaMuon only operate on rank 2 tensors. 
+        They also should not be used on embedding or unembedding matrices in first/final layers
+        """
         if id(p) in excluded_ids:
             return True
         if name.startswith("token_embedding") or "embedding" in name:
@@ -136,13 +140,12 @@ def build_optimizers(
 
 def prepare_targets(input_ids: torch.Tensor) -> Tuple[torch.Tensor, int]:
     """Create next-token targets and compute effective token count (no masks)."""
-
     targets = input_ids[:, 1:]
     total_effective = int(targets.numel())
     return targets, total_effective
 
 def log_implementation(matrix_params, other_params):
-    # quick summary of which parameter sets are optimized by which optimizer
+    """Sanity check for the parameters that Muon/AdaMuon operate on"""
     def _summarize(params):
         return [tuple(p.shape) for p in params][:10]
 
@@ -165,7 +168,7 @@ def compute_loss_sum(
     chunk_size: int,
     loss_fn: nn.Module,
 ) -> torch.Tensor:
-    """Compute summed cross-entropy across time, optionally chunked."""
+    """Compute summed cross-entropy across the sequence, optionally chunked."""
 
     time = hidden.size(1)
     if chunk_size <= 0 or chunk_size >= time:
@@ -271,12 +274,42 @@ def apply_moe_schedules(model: nn.Module, cfg: Any, progress_t: float) -> float:
 def scale_optimizer_lr(
     optimizer: torch.optim.Optimizer | None, base_lr: float, lr_scale: float
 ) -> None:
-    """Apply a scaling factor to every parameter group in the optimizer."""
+    """
+    Apply a scaling factor to every parameter group in the optimizer.
+    Muon/Adamuon have different optimizer scales than AdamW
+    For example:
+        If AdamW lr is 5e-4
+        Muon lr is 1e-2 approximately
+    """
 
     if optimizer is None:
         return
     for group in optimizer.param_groups:
         group["lr"] = base_lr * lr_scale
+
+
+def estimate_flops(tokens_used, d_model, d_hidden, n_heads, seq_len,
+                   n_layers, n_moe_layers, top_k, n_experts, using_moe, capacity=1.0,
+                   optimizer_factor=6.0):
+    """
+    Estimate the amount of flops the model has used. This metric is used to determine how efficient the model is
+    """
+    dense_params = (n_layers - n_moe_layers) * (4 * d_model**2 + 2 * d_model * d_hidden)
+
+    if using_moe and n_moe_layers:
+        expert_params = n_moe_layers * top_k * (2 * d_model * d_hidden)
+        router_params = n_moe_layers * d_model * n_experts
+    else:
+        expert_params = 0
+        router_params = 0
+
+    active_params = dense_params + expert_params + router_params
+
+    flops = tokens_used * (
+        6.0 * active_params        # forward + backward + optimizer update
+        + 12.0 * n_layers * d_model * seq_len  # attention matmuls (seq_len^2 collapses because tokens_used already counts S tokens per batch)
+    )
+    return flops
 
 
 __all__ = [
@@ -291,21 +324,3 @@ __all__ = [
     "apply_moe_schedules",
     "scale_optimizer_lr",
 ]
-
-def estimate_flops(tokens_used, d_model, d_hidden, n_heads, seq_len,
-                   n_layers, n_moe_layers, top_k, n_experts, using_moe, capacity=1.0,
-                   optimizer_factor=6.0):
-    d_head = d_model // n_heads
-    active_params = n_layers * (3 * d_model * d_model + d_model * d_model)  # QKV + proj
-    dense_mlp = 2 * d_model * d_hidden
-    if using_moe and n_moe_layers:
-        expert_params = top_k * capacity * 2 * d_model * d_hidden
-        active_params += (n_layers - n_moe_layers) * dense_mlp + n_moe_layers * expert_params
-        router_params = n_moe_layers * d_model * n_experts
-    else:
-        active_params += n_layers * dense_mlp
-        router_params = 0
-
-    attn_matmul = 12 * n_layers * n_heads * d_head * seq_len
-    per_token = optimizer_factor * (active_params + router_params) + attn_matmul
-    return per_token * tokens_used
