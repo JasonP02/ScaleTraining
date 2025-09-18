@@ -6,8 +6,9 @@ Run from CLI: `python -m scaletraining.entrypoints.train` or via console script.
 """
 from __future__ import annotations
 
-from pathlib import Path
 import json
+import logging
+from pathlib import Path
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -29,7 +30,15 @@ from scaletraining.util import (
 )
 from scaletraining.model.training_loop import training_run
 from scaletraining.inference.generation import generate_autoregressive
+from scaletraining.util.model_stats import (
+    count_parameters,
+    humanize_bytes,
+    humanize_params,
+)
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @hydra.main(version_base=None, config_path=str(Path(__file__).parent.parent.parent.parent / "conf"), config_name="config")
@@ -69,6 +78,41 @@ def main(cfg: DictConfig) -> float:
 
     # Model + loss
     model = TransformerNetwork(flat)
+
+    total_params, trainable_params = count_parameters(model)
+    readable_total = humanize_params(total_params)
+    readable_trainable = humanize_params(trainable_params)
+    bytes_fp32 = total_params * 4
+    bytes_bf16 = total_params * 2
+
+    size_msg = (
+        f"Model parameters: {total_params:,} ({readable_total}); "
+        f"Trainable: {trainable_params:,} ({readable_trainable}); "
+        f"Approx size fp32: {humanize_bytes(bytes_fp32)}, bf16/fp16: {humanize_bytes(bytes_bf16)}"
+    )
+    print(size_msg)
+    LOGGER.info(size_msg)
+
+    try:
+        import wandb
+
+        if wandb.run is not None:
+            wandb.log(
+                {
+                    "model/total_params": total_params,
+                    "model/trainable_params": trainable_params,
+                    "model/size_bytes_fp32": bytes_fp32,
+                    "model/size_bytes_bf16": bytes_bf16,
+                },
+                step=0,
+            )
+            wandb.run.summary["model/total_params"] = total_params
+            wandb.run.summary["model/trainable_params"] = trainable_params
+    except ModuleNotFoundError:
+        pass
+    except Exception as exc:  # pragma: no cover - W&B logging is best-effort
+        LOGGER.warning("Failed to log model size to W&B: %s", exc)
+
     # Compile model for massive speedups
     model = torch.compile(model, mode="max-autotune")
     loss_fn = nn.CrossEntropyLoss(reduction='sum')  # summed CE, normalized per token in loop

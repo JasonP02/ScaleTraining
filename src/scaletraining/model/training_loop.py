@@ -69,6 +69,10 @@ def training_run(
 
     stats = {"train_loss": []}
     used_tokens = 0
+    best_train_loss = float('inf')
+    tokens_at_best_loss = 0
+    early_stop_tokens = max(0, int(getattr(cfg, "early_stop_tokens_without_improvement", 0)))
+    early_stop_min_delta = float(getattr(cfg, "early_stop_min_delta", 0.0))
     step_in_accum = 0
     accum_loss_sum = 0.0
     accum_token_count = 0
@@ -157,8 +161,21 @@ def training_run(
                     throughput=tps,
                     flops_used = flops_used
                 )
+
+                if avg_loss + early_stop_min_delta < best_train_loss:
+                    best_train_loss = avg_loss
+                    tokens_at_best_loss = used_tokens
+                elif early_stop_tokens > 0 and (used_tokens - tokens_at_best_loss) >= early_stop_tokens:
+                    print(
+                        f"Early stopping: no train_loss improvement for {(used_tokens - tokens_at_best_loss):,} tokens; stopping run."
+                    )
+                    stop_training = True
+
                 accum_loss_sum = 0.0
                 accum_token_count = 0
+
+                if stop_training:
+                    break
 
                 eval_interval = cfg.eval_interval_tokens
                 max_val_batches = cfg.eval_max_batches
