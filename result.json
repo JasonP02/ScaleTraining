@@ -1,8 +1,8 @@
 {
   "accum_steps": 4,
   "batch_size": 32,
-  "final_train_loss": 2.7543113181540915,
-  "lr": 0.02,
+  "final_train_loss": 3.228191631572979,
+  "lr": 0.005,
   "max_seq_len": 1000,
   "n_embed": 512,
   "n_head": 8,

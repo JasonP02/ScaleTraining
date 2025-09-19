@@ -84,12 +84,20 @@ def init_wandb(cfg: t.Any, config_dict: t.Optional[t.Mapping[str, t.Any]] = None
             name_suffix = tokenizer_name.split("/")[-1] if "/" in tokenizer_name else tokenizer_name
         tags = ["hf_tokenizer"]
 
+    sweep_name = "solo"
+    if isinstance(config_dict, t.Mapping):
+        sweep_section = config_dict.get("sweep")
+        if isinstance(sweep_section, t.Mapping):
+            sweep_name = str(sweep_section.get("name") or sweep_name)
+
+    run_tags = [*tags, f"sweep-{sweep_name}"] if sweep_name else tags
+
     wandb_sdk.init(
         project=cfg.wandb_project_name,
         config=dict(config_dict) if config_dict is not None else None,
         reinit=True,
-        name=f"sweep_{name_suffix}",
-        tags=tags,
+        name=f"{sweep_name}_{name_suffix}",
+        tags=run_tags,
     )
 
 

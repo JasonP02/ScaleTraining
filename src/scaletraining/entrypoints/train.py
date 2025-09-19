@@ -48,13 +48,19 @@ def main(cfg: DictConfig) -> float:
     """
     # Keep both the Hydra config (for metadata) and a flattened namespace for modules that expect attrs.
     flat = flatten_cfg(cfg)
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+    sweep_name = "solo"
+    if isinstance(cfg_dict, dict):
+        sweep_section = cfg_dict.get("sweep")
+        if isinstance(sweep_section, dict):
+            sweep_name = str(sweep_section.get("name") or sweep_name)
 
     # Resolve device, configure kernels, and free any stale CUDA cache
     resolve_device(flat)
     configure_rocm_and_sdp(flat)
     clear_cuda_cache()
 
-    init_wandb(flat, OmegaConf.to_container(cfg, resolve=True))
+    init_wandb(flat, cfg_dict)
 
     train_loader, val_loader = build_loaders(flat)
 
@@ -69,7 +75,7 @@ def main(cfg: DictConfig) -> float:
             from pathlib import Path as _P
             base = _P(tok_path).stem
             if wandb.run is not None:
-                wandb.run.name = f"sweep_{base}"
+                wandb.run.name = f"{sweep_name}_{base}"
     except Exception as _e:
         # Non-fatal: keep existing W&B name if metadata is unavailable
         pass
