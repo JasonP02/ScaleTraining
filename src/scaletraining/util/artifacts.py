@@ -13,6 +13,9 @@ from .config import _cfg_subset, config_fingerprint
 from .path_utils import _sanitize
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
 def write_metadata(path: str, data: Dict[str, Any]) -> None:
     try:
         os.makedirs(path, exist_ok=True)
@@ -88,6 +91,13 @@ def save_run_manifest(cfg: Any, out_dir: str, extra: Optional[Dict[str, Any]] = 
 
 def save_model(model: torch.nn.Module, cfg: Any, out_root: Optional[str] = None) -> str:
     out_root = out_root or cfg.output_dir
+    if out_root and not os.path.isabs(out_root):
+        # Prefer cwd resolution if already absolute, otherwise anchor to repo root
+        cwd_candidate = Path.cwd() / out_root
+        if cwd_candidate.exists():
+            out_root = str(cwd_candidate.resolve(strict=False))
+        else:
+            out_root = str((_REPO_ROOT / out_root).resolve(strict=False))
     tag = _sanitize(cfg.dataset_tag)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     fingerprint = config_fingerprint(cfg)[:8]
@@ -111,6 +121,10 @@ def find_latest_model_path(output_root: str) -> Optional[str]:
     """
     try:
         root = Path(output_root)
+        if not root.is_absolute() and not root.exists():
+            repo_candidate = (_REPO_ROOT / root).resolve(strict=False)
+            if repo_candidate.exists():
+                root = repo_candidate
         if not root.exists():
             return None
 

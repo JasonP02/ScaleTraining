@@ -135,35 +135,6 @@ def main(cfg: DictConfig) -> float:
     run_dir = save_model(model, flat, flat.output_dir)
     print(f"Model saved locally to: {run_dir}")
 
-    # Optional: sample generation after training for quick qualitative check
-    if flat.generate_after_train:
-        try:
-            tok_path = flat.tokenizer_name
-            from pathlib import Path as _P
-            if isinstance(tok_path, str) and _P(tok_path).exists() and tok_path.endswith('.json'):
-                tok = PreTrainedTokenizerFast(tokenizer_file=tok_path)
-                if tok.eos_token_id is None:
-                    tok.add_special_tokens({"eos_token": ""})
-                if tok.pad_token_id is None:
-                    tok.pad_token = tok.eos_token
-            else:
-                tok = AutoTokenizer.from_pretrained(tok_path, use_fast=True)
-                if tok.eos_token_id is None:
-                    tok.add_special_tokens({"eos_token": ""})
-                if tok.pad_token_id is None:
-                    tok.pad_token = tok.eos_token
-            text = generate_autoregressive(
-                model,
-                tok,
-                flat.device,
-                prompt=flat.prompt,
-                max_new_tokens=int(flat.generation_max_tokens),
-                temperature=float(flat.generation_temperature),
-                top_k=int(flat.generation_top_k),
-            )
-            print("\n=== Generated Sample (post-train) ===\n" + text + "\n====================================\n")
-        except Exception as e:
-            print(f"Post-train generation skipped: {e}")
 
     # Persist a lightweight result.json in the job directory for easy aggregation
     job_result = {

@@ -34,7 +34,9 @@ rope_config:
   use_complex: true     # complex number representation
 
 # Evaluation (lightweight, optional)
-eval_datasets: openai/gsm8k, Sadanto3933/ai2_arc
+eval_datasets:
+  - openai/gsm8k
+  - Sadanto3933/ai2_arc
 eval_interval_tokens: 0   # set 0 to disable periodic eval during training
 eval_max_batches: 50            # cap validation batches per eval (0 = all)
 eval_batch_size: 1
@@ -56,5 +58,5 @@ baseline_adam_config:
 
 # LR scheduling
 lr_schedule: cosine         # one of: none|cosine|linear
-warmup_tokens: 1000000      # number of tokens for linear warmup
+warmup_tokens: 1000000      # keep only this occurrence
 min_lr_scale: 0.1           # final LR scale at end of schedule (for cosine/linear)

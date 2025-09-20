@@ -1,4 +1,6 @@
 from __future__ import annotations
+from pathlib import Path
+
 import torch
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
@@ -15,6 +17,9 @@ from torch.amp import autocast
 from torch.utils.data import DataLoader
 
 from scaletraining.util.training_utils import compute_loss_sum, prepare_targets
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 @torch.inference_mode()
@@ -58,19 +63,37 @@ def evaluate_perplexity(
     return avg, ppl
 
 def load_pretrained_model_and_tokenizer(flat):
-    model_path = getattr(flat, "model_path", None)
-    if not model_path or str(model_path).lower() == "latest":
+    output_root_value = getattr(flat, "output_dir", "outputs")
+    output_root = Path(output_root_value).expanduser()
+    if not output_root.is_absolute():
+        output_root = (_REPO_ROOT / output_root).expanduser()
+    flat.output_dir = str(output_root)
+
+    model_path_cfg = getattr(flat, "model_path", None)
+    if not model_path_cfg or str(model_path_cfg).lower() == "latest":
         # Auto-discover latest model under outputs
-        output_root = getattr(flat, "output_dir", "outputs")
-        auto_path = find_latest_model_path(output_root)
+        auto_path = find_latest_model_path(flat.output_dir)
         if not auto_path:
-            raise RuntimeError("No model_path provided and no latest model found under outputs/. Pass model_path=... or create outputs/<run>/model.pt.")
+            raise RuntimeError(
+                "No model_path provided and no latest model found under outputs/. Pass model_path=... or create outputs/<run>/model.pt."
+            )
         print(f"[generate] Using latest model: {auto_path}")
-        model_path = auto_path
+        model_path = Path(auto_path)
+    else:
+        model_path = Path(model_path_cfg).expanduser()
+        if not model_path.is_absolute():
+            model_path = (_REPO_ROOT / model_path).expanduser()
+
+    flat.model_path = str(model_path)
 
     # Build model from config and load weights
     model = TransformerNetwork(flat).to(flat.device)
-    ckpt = torch.load(model_path, map_location=flat.device)
+    model_path_obj = Path(model_path)
+    if not model_path_obj.exists():
+        raise FileNotFoundError(
+            f"Checkpoint not found at {model_path_obj}. Provide model_path=/absolute/path/to/model.pt or place checkpoints under {flat.output_dir}."
+        )
+    ckpt = torch.load(str(model_path_obj), map_location=flat.device)
     state_dict = ckpt.get("state_dict", ckpt)
     # Normalize keys from compiled/DataParallel checkpoints if present
     def _strip_prefix(sd, prefix: str):
@@ -84,8 +107,7 @@ def load_pretrained_model_and_tokenizer(flat):
 
     # Load tokenizer, supporting local JSON (dataset-specific) via PreTrainedTokenizerFast
     tok_path = flat.tokenizer_name
-    from pathlib import Path as _P
-    if isinstance(tok_path, str) and _P(tok_path).exists() and tok_path.endswith('.json'):
+    if isinstance(tok_path, str) and Path(tok_path).exists() and tok_path.endswith('.json'):
         tok = PreTrainedTokenizerFast(tokenizer_file=tok_path)
         if tok.eos_token_id is None:
             tok.add_special_tokens({"eos_token": ""})
@@ -97,3 +119,5 @@ def load_pretrained_model_and_tokenizer(flat):
             tok.add_special_tokens({"eos_token": ""})
         if tok.pad_token_id is None:
             tok.pad_token = tok.eos_token
+
+    return model, tok

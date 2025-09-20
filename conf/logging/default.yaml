@@ -14,7 +14,7 @@ log_model_artifacts: false
 # Generation defaults (used by scaletraining-generate and optional post-train sample)
 prompt: "There was a star ship in the sky and "
 # Provide via CLI: model_path=/path/to/model.pt (defaults to empty)
-model_path: "outputs/v=004acfd1__20250915T010634Z/model.pt"
+model_path: "outputs/v=004acfd1__20250917T111817Z/model.pt"
 generation_max_tokens: 1000
 generation_temperature: 1.0
 generation_top_k: 50

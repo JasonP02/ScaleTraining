@@ -1,9 +1,10 @@
 defaults:
   - _self_
-  # Namespaced groups: transformer, tokenizer, logging
+  # Namespaced groups: transformer, tokenizer, logging, moe
   - transformer: default  # Must be present for eval_datasets to be available in run_evals.py
   - tokenizer: default
   - logging: default
+  - moe: default
   # Hydra sweeper config
   - override hydra/sweeper: grid
 
