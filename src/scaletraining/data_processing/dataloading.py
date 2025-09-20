@@ -1,4 +1,5 @@
 import os
+from typing import Any
 
 from datasets import load_from_disk
 from torch.utils.data import DataLoader
@@ -8,6 +9,7 @@ from scaletraining.data_processing.tokenization import tokenize_dataset
 from scaletraining.util.artifacts import read_metadata
 from scaletraining.util.config import _cfg_subset
 from scaletraining.util.paths import packed_dir, tokenized_dir
+from dataclasses import dataclass
 
 def check_tokenizer_metadata(cfg, dataset_root, tok_dir, pk_dir):
     meta = read_metadata(dataset_root) or read_metadata(tok_dir) or read_metadata(pk_dir)
