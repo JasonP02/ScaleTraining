@@ -2,13 +2,10 @@
 
 # Dataset selection and IO
 hf_dataset_names: roneneldan/TinyStories
-val_hf_dataset_names: null
 tokenized_path: data/train/tokenized/tokenized_base
 batched_tokenized_path: data/train/tokenized/tokenized_batched
 dataset_tag: ""
 strict_dataset_compat: false
-train_split: train
-val_split: validation
 
 # Tokenization behavior
 tokenizer_name: EleutherAI/gpt-neo-125M  # Fallback tokenizer; dataset-specific tokenizers preferred

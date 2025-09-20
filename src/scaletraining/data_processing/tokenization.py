@@ -1,6 +1,6 @@
-from datasets import Dataset, DatasetDict, load_dataset
+from datasets import load_dataset
 from transformers import AutoTokenizer
-from typing import Any, Dict, List, Optional
+from typing import Dict, Any, List
 import hydra
 from omegaconf import DictConfig
 from scaletraining.util.artifacts import write_metadata
@@ -108,36 +108,6 @@ def get_tokenizer(tok_name: str):
     return tok, tok.eos_token_id
 
 
-def _ensure_dataset_dict(dataset: Any, default_key: Optional[str] = None) -> DatasetDict:
-    """Normalize datasets.load_dataset outputs into a DatasetDict."""
-
-    if isinstance(dataset, DatasetDict):
-        return dataset
-    if isinstance(dataset, Dataset):
-        key = default_key or "data"
-        return DatasetDict({key: dataset})
-    if isinstance(dataset, dict):  # handle plain dicts for robustness
-        return DatasetDict(dataset)
-    raise RuntimeError(
-        "Expected load_dataset to return a DatasetDict; specify a split in config if providing a single Dataset."
-    )
-
-
-def _resolve_split(dataset: DatasetDict, requested: Optional[str], fallbacks: List[str]) -> Optional[str]:
-    """Return the first available split from requested + fallbacks."""
-
-    candidates = []
-    if requested:
-        candidates.append(requested)
-    for fb in fallbacks:
-        if fb and fb not in candidates:
-            candidates.append(fb)
-    for name in candidates:
-        if name in dataset:
-            return name
-    return None
-
-
 def tokenize_dataset(cfg) -> None:
     """Tokenize text -> input_ids (+ optional attention_mask) and save to disk.
 
@@ -164,19 +134,9 @@ def tokenize_dataset(cfg) -> None:
     max_len = int(cfg.max_seq_len)
 
     try:
-        raw_train_dataset = load_dataset(cfg.hf_dataset_names)
+        ds = load_dataset(cfg.hf_dataset_names)
     except Exception as e:
         raise RuntimeError(f"Could not load dataset: {e}")
-
-    train_dataset = _ensure_dataset_dict(raw_train_dataset, getattr(cfg, "train_split", None))
-
-    # Resolve train split with sensible fallbacks
-    train_fallbacks = ["train"] + list(train_dataset.keys())
-    train_split = _resolve_split(train_dataset, getattr(cfg, "train_split", None), train_fallbacks)
-    if train_split is None:
-        raise RuntimeError(
-            f"Unable to determine train split for dataset {cfg.hf_dataset_names}; available splits: {list(train_dataset.keys())}"
-        )
 
     def tokenize_function(examples: Dict[str, List[str]]) -> Dict[str, Any]:
         out = tok(
@@ -190,9 +150,12 @@ def tokenize_dataset(cfg) -> None:
         input_ids = [ids + [eos_id] for ids in input_ids]
         return {"input_ids": input_ids}
 
-    tokenized_train = train_dataset[train_split].map(
+    train_split = "train" if "train" in ds else list(ds.keys())[0]
+    val_split = "validation" if "validation" in ds else ("test" if "test" in ds else None)
+
+    tokenized_train = ds[train_split].map(
         tokenize_function,
-        remove_columns=train_dataset[train_split].column_names,
+        remove_columns=ds[train_split].column_names,
         batched=True,
         num_proc=cfg.num_proc,
         load_from_cache_file=True,
@@ -200,41 +163,16 @@ def tokenize_dataset(cfg) -> None:
     )
     tokenized_train.save_to_disk(f"{save_path}/train")
 
-    # Validation dataset may reuse the train dataset or come from a distinct spec
-    val_dataset_spec = getattr(cfg, "val_hf_dataset_names", None)
-    if val_dataset_spec and val_dataset_spec != cfg.hf_dataset_names:
-        try:
-            raw_val_dataset = load_dataset(val_dataset_spec)
-        except Exception as e:
-            raise RuntimeError(f"Could not load validation dataset: {e}")
-        val_dataset = _ensure_dataset_dict(raw_val_dataset, getattr(cfg, "val_split", None))
-    else:
-        val_dataset = train_dataset
-
-    val_fallbacks = ["validation", "val", "test"]
-    if val_dataset is train_dataset and train_split in val_fallbacks:
-        val_fallbacks.remove(train_split)
-    for key in val_dataset.keys():
-        if key != train_split and key not in val_fallbacks:
-            val_fallbacks.append(key)
-
-    val_split = _resolve_split(val_dataset, getattr(cfg, "val_split", None), val_fallbacks)
-
     if val_split:
-        tokenized_val = val_dataset[val_split].map(
+        tokenized_val = ds[val_split].map(
             tokenize_function,
-            remove_columns=val_dataset[val_split].column_names,
+            remove_columns=ds[val_split].column_names,
             batched=True,
             num_proc=cfg.num_proc,
             load_from_cache_file=True,
             desc="Tokenizing val",
         )
         tokenized_val.save_to_disk(f"{save_path}/val")
-    elif val_dataset_spec:
-        print(
-            f"Validation split '{getattr(cfg, 'val_split', None)}' not found for dataset {val_dataset_spec}; "
-            "skipping validation tokenization."
-        )
 
     write_metadata(save_path, {
         "config": _cfg_subset(cfg),

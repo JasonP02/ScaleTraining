@@ -44,12 +44,13 @@ def build_loaders(cfg, for_training: bool = True):
     work directly from the tokenized split directories so evaluation code can
     reuse variable-length text without repacking.
     """
-    tok_dir = tokenized_dir(cfg)
+    tok_dir = tokenized_dir(cfg, for_training)
     tokenized_train_dir = os.path.join(tok_dir, "train")
-    if not is_tokenized(tokenized_train_dir):
+    # We dont want to tokenize for evals.
+    if not is_tokenized(tokenized_train_dir) and for_training:
         tokenize_dataset(cfg)
-
-    pk_dir = packed_dir(cfg)  # expected packed dataset location for this config
+        
+    pk_dir = packed_dir(cfg, for_training)  # expected packed dataset location for this config
     if for_training:
         dataset_root = pk_dir
         packed_data_dir = os.path.join(pk_dir, "train")
@@ -83,26 +84,26 @@ def build_loaders(cfg, for_training: bool = True):
     eval_bsz = getattr(cfg, "eval_batch_size", None)
     if eval_bsz is None:
         eval_bsz = cfg.batch_size
-    train_bsz = int(cfg.batch_size if for_training else eval_bsz)
-    val_bsz = int(eval_bsz)
+    bsz = int(cfg.batch_size if for_training else eval_bsz)
 
     train_loader = DataLoader(
         train,
-        batch_size=train_bsz,
+        batch_size=bsz,
         shuffle=bool(for_training),
         drop_last=bool(for_training),
         **loader_kwargs,
     )
 
     val_loader = None
-    val_path = f"{dataset_root}/val"
-    if os.path.isdir(val_path):
-        val = load_from_disk(val_path).with_format("torch", columns=["input_ids"])
+    try:
+        val = load_from_disk(f"{dataset_root}/val").with_format("torch", columns=["input_ids"])
         val_loader = DataLoader(
             val,
-            batch_size=val_bsz,
+            batch_size=bsz,
             shuffle=False,
             drop_last=False,
             **loader_kwargs,
         )
+    except Exception:
+        pass
     return train_loader, val_loader

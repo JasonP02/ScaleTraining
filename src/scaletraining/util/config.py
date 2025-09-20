@@ -8,9 +8,6 @@ from typing import Any, Dict
 
 _FINGERPRINT_FIELDS = (
     "hf_dataset_names",
-    "val_hf_dataset_names",
-    "train_split",
-    "val_split",
     "tokenizer_name",
     "max_seq_len",
     "use_attention_mask",
@@ -22,7 +19,7 @@ def _cfg_subset(cfg: Any) -> Dict[str, Any]:
 
     out: Dict[str, Any] = {}
     for key in _FINGERPRINT_FIELDS:
-        out[key] = getattr(cfg, key, None)
+        out[key] = getattr(cfg, key)
     return out
 
 
