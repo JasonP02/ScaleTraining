@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 import torch
 
 from .config import _cfg_subset, config_fingerprint
-from .paths import _sanitize
+from .path_utils import _sanitize
 
 
 def write_metadata(path: str, data: Dict[str, Any]) -> None:
@@ -55,7 +55,7 @@ def save_run_manifest(cfg: Any, out_dir: str, extra: Optional[Dict[str, Any]] = 
             "logits_chunk_size": cfg.logits_chunk_size,
             "device": cfg.device,
         },
-        "model": {
+        "transformer": {
             "n_layer": cfg.n_layer,
             "n_head": cfg.n_head,
             "n_embed": cfg.n_embed,

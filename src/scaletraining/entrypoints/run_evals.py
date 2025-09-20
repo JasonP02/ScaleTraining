@@ -16,38 +16,31 @@ from torch.utils.data import DataLoader
 
 from scaletraining.util import flatten_cfg, resolve_device
 from scaletraining.util.eval_utils import evaluate_perplexity
-from scaletraining.data_processing import build_loaders
+from scaletraining.data_processing import build_loaders, get_loader_kwargs
 
 def benchmark_model(model, eval_loader):
     pass
-
 
 @hydra.main(version_base=None, config_path=str(Path(__file__).parent.parent.parent.parent / "conf"), config_name="config")
 def main(cfg: DictConfig) -> None:
     flat = flatten_cfg(cfg)
     resolve_device(flat)
+    tokenizer = cfg.tokenizer  # assumes tokenizer is already loaded in config
+    def tokenize_fn(example):
+        return tokenizer(example["text"], truncation=True, padding="max_length", max_length=cfg.data.max_length)
 
-    for eset in flat.eval_datasets:
+    esets = flat.eval_datasets
+    print(esets)
+
+    for eset in esets:
         # Download dataset
-        dataset = load_dataset(eset)
+        eval_dataset = load_dataset(eset)
         # Tokenize using tokenizer from config
-        tokenizer = cfg.tokenizer  # assumes tokenizer is already loaded in config
-        def tokenize_fn(example):
-            return tokenizer(example["text"], truncation=True, padding="max_length", max_length=cfg.data.max_length)
-        tokenized_dataset = dataset.map(tokenize_fn, batched=True)
+        tokenized_dataset = eval_dataset.map(tokenize_fn, batched=True)
         # Build DataLoader
         _, val_loaders = build_loaders(tokenized_dataset, for_training=False)
 
-        num_workers = int(getattr(cfg, "loader_num_workers", 0))
-        loader_kwargs = {
-            "num_workers": num_workers,
-            "pin_memory": bool(getattr(cfg, "loader_pin_memory", False)),
-        }
-        if num_workers > 0:
-            loader_kwargs["persistent_workers"] = bool(getattr(cfg, "loader_persistent_workers", False))
-            prefetch = getattr(cfg, "loader_prefetch_factor", None)
-            if prefetch:
-                loader_kwargs["prefetch_factor"] = int(prefetch)
+        loader_kwargs = get_loader_kwargs(cfg)
 
         eval_loader = DataLoader(
             tokenized_dataset,
@@ -58,6 +51,7 @@ def main(cfg: DictConfig) -> None:
         )
         # Pass into model for evaluation
         model = cfg.model  # assumes model is already loaded in config
+        print(eval_loader)
         benchmark_model(model, eval_loader)
     
 

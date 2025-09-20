@@ -47,7 +47,7 @@ def flatten_cfg(cfg: Any) -> Any:
             return dict(node) if node is not None else {}
 
     merged: Dict[str, Any] = {}
-    for group in ("model", "tokenizer", "logging"):
+    for group in ("transformer", "tokenizer", "logging"):
         try:
             sub = cfg.get(group) if hasattr(cfg, "get") else getattr(cfg, group, None)
         except Exception:

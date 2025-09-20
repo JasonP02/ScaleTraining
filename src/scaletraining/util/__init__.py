@@ -10,7 +10,7 @@ from .artifacts import (
 from .config import _cfg_subset, config_fingerprint, flatten_cfg
 from .device import clear_cuda_cache, configure_rocm_and_sdp, resolve_device
 from .model_stats import count_parameters, humanize_bytes, humanize_params
-from .paths import packed_dir, tokenized_dir
+from .path_utils import packed_dir, tokenized_dir
 from .wandb_utils import init_wandb, log_eval_metrics, log_train_metrics
 
 __all__ = [

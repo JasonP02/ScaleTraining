@@ -8,7 +8,7 @@ from scaletraining.data_processing.batch_packer import pack_and_save
 from scaletraining.data_processing.tokenization import tokenize_dataset
 from scaletraining.util.artifacts import read_metadata
 from scaletraining.util.config import _cfg_subset
-from scaletraining.util.paths import packed_dir, tokenized_dir
+from scaletraining.util.path_utils import packed_dir, tokenized_dir
 from dataclasses import dataclass
 
 def check_tokenizer_metadata(cfg, dataset_root, tok_dir, pk_dir):
@@ -38,6 +38,19 @@ def is_tokenized(tokenized_path):
 def is_packed(packed_path):
     return os.path.isdir(packed_path)
 
+
+def get_loader_kwargs(cfg):
+    num_workers = int(getattr(cfg, "loader_num_workers", 0))
+    loader_kwargs = {
+        "num_workers": num_workers,
+        "pin_memory": bool(getattr(cfg, "loader_pin_memory", False)),
+    }
+    if num_workers > 0:
+        loader_kwargs["persistent_workers"] = bool(getattr(cfg, "loader_persistent_workers", False))
+        prefetch = getattr(cfg, "loader_prefetch_factor", None)
+        if prefetch:
+            loader_kwargs["prefetch_factor"] = int(prefetch)
+            
 def build_loaders(cfg, for_training: bool = True):
     """Build PyTorch DataLoaders from dataset artifacts.
 
@@ -72,21 +85,9 @@ def build_loaders(cfg, for_training: bool = True):
     check_tokenizer_metadata(cfg, dataset_root, tok_dir, pk_dir)
 
     train = load_from_disk(f"{dataset_root}/train").with_format("torch", columns=["input_ids"])
-    num_workers = int(getattr(cfg, "loader_num_workers", 0))
-    loader_kwargs = {
-        "num_workers": num_workers,
-        "pin_memory": bool(getattr(cfg, "loader_pin_memory", False)),
-    }
-    if num_workers > 0:
-        loader_kwargs["persistent_workers"] = bool(getattr(cfg, "loader_persistent_workers", False))
-        prefetch = getattr(cfg, "loader_prefetch_factor", None)
-        if prefetch:
-            loader_kwargs["prefetch_factor"] = int(prefetch)
+    loader_kwargs = get_loader_kwargs(cfg)
 
-    eval_bsz = getattr(cfg, "eval_batch_size", None)
-    if eval_bsz is None:
-        eval_bsz = cfg.batch_size
-    bsz = int(cfg.batch_size if for_training else eval_bsz)
+    bsz = int(cfg.batch_size if for_training else cfg.eval_bsz)
 
     train_loader = DataLoader(
         train,

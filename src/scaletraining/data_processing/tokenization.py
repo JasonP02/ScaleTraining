@@ -5,7 +5,7 @@ import hydra
 from omegaconf import DictConfig
 from scaletraining.util.artifacts import write_metadata
 from scaletraining.util.config import _cfg_subset, flatten_cfg
-from scaletraining.util.paths import tokenized_dir
+from scaletraining.util.path_utils import tokenized_dir
 from pathlib import Path
 
 
