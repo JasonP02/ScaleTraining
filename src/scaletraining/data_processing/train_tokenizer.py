@@ -17,8 +17,8 @@ def get_dataset_text_files(cfg: DictConfig) -> list[str]:
     Returns:
         List of paths to text files for training
     """
-    # Prefer configured path; fallback to project-local data/
-    data_dir = Path(getattr(cfg, "tokenizer_train_data", "data"))
+    # Prefer configured path; fallback to project-local data/train/raw
+    data_dir = Path(getattr(cfg, "tokenizer_train_data", "data/train/raw"))
     if not data_dir.is_absolute():
         data_dir = Path.cwd() / data_dir
     data_dir.mkdir(parents=True, exist_ok=True)

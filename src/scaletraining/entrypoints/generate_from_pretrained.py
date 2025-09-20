@@ -13,24 +13,11 @@ import hydra
 from omegaconf import DictConfig
 
 from scaletraining.util import flatten_cfg, resolve_device
-from scaletraining.inference.generation import generate_autoregressive
+from scaletraining.util.generation_utils import generate_autoregressive
 from scaletraining.util.eval_utils import load_pretrained_model_and_tokenizer
 
 
-@hydra.main(version_base=None, config_path=str(Path(__file__).parent.parent.parent.parent / "conf"), config_name="config")
-def main(cfg: DictConfig) -> None:
-    """
-    Generate text from a saved model.
-
-    Required Hydra overrides:
-      - model_path: str, filesystem path to a torch checkpoint saved by save_model().
-
-    Optional relevant config keys:
-      - prompt: str, seed text for generation (default: simple story prompt)
-      - generation_max_tokens: int, number of tokens to generate
-      - generation_temperature: float, softmax temperature (>0)
-      - generation_top_k: int, top-k filtering; set 0/None to disable
-    """
+def generate_text(cfg):
     flat = flatten_cfg(cfg)
     resolve_device(flat)
 
@@ -52,6 +39,23 @@ def main(cfg: DictConfig) -> None:
         temperature=temperature,
         top_k=top_k,
     )
+    return text
+
+@hydra.main(version_base=None, config_path=str(Path(__file__).parent.parent.parent.parent / "conf"), config_name="config")
+def main(cfg: DictConfig) -> None:
+    """
+    Generate text from a saved model.
+
+    Required Hydra overrides:
+      - model_path: str, filesystem path to a torch checkpoint saved by save_model().
+
+    Optional relevant config keys:
+      - prompt: str, seed text for generation (default: simple story prompt)
+      - generation_max_tokens: int, number of tokens to generate
+      - generation_temperature: float, softmax temperature (>0)
+      - generation_top_k: int, top-k filtering; set 0/None to disable
+    """
+    text = generate_text(cfg)
     print("\n=== Generated Sample ===\n" + text + "\n=======================\n")
 
 

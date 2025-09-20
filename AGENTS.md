@@ -5,7 +5,7 @@
 - `conf/`: Hydra configs (defaults, sweeper). Sweeps write to `multirun/`.
 - `scripts/`: utilities (e.g., `summarize_multirun.py`).
 - `tests/`: test suite entry (`tests/tests.py`).
-- `datasets/`, `outputs/`, `wandb/`, `multirun/`: data, artifacts, and run logs.
+- `data/`, `outputs/`, `wandb/`, `multirun/`: datasets, artifacts, and run logs.
 
 ## Build, Test, and Development Commands
 - Run tests: `python tests/tests.py`
@@ -38,4 +38,3 @@
 - ROCm: changing or reinstalling `torch` can break the setup—avoid unless approved.
 - Hydra paths: default run dir is repo root; sweeps go under `multirun/YYYY-MM-DD/HH-MM-SS/`.
 - W&B: local logs in `wandb/run-*/files/` (e.g., `wandb-summary.json`, `config.yaml`).
-

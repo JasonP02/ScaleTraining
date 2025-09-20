@@ -14,7 +14,7 @@ import torch.nn as nn
 from torch.amp import autocast
 from torch.utils.data import DataLoader
 
-from scaletraining.evals import evaluate_perplexity
+from scaletraining.util.eval_utils import evaluate_perplexity
 from scaletraining.util.training_utils import (
     apply_moe_schedules,
     build_optimizers,
@@ -151,6 +151,7 @@ def training_run(
                     top_k=cfg.moe_top_k,
                     n_experts=cfg.moe_n_experts,
                     using_moe=cfg.use_moe)
+
                 print(
                     f"Tokens: {used_tokens:,}, Loss: {avg_loss:.4f}, LR: {current_lr:.6g}, tok/s: {tps:.0f}"
                 )

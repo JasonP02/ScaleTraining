@@ -34,8 +34,10 @@ rope_config:
   use_complex: true     # complex number representation
 
 # Evaluation (lightweight, optional)
+eval_datasets: openai/gsm8k, Sadanto3933/ai2_arc
 eval_interval_tokens: 0   # set 0 to disable periodic eval during training
 eval_max_batches: 50            # cap validation batches per eval (0 = all)
+eval_batch_size: 1
 
 # MoE Architecture
 use_moe: false

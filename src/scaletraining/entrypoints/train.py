@@ -29,7 +29,7 @@ from scaletraining.util import (
     tokenized_dir,
 )
 from scaletraining.model.training_loop import training_run
-from scaletraining.inference.generation import generate_autoregressive
+from scaletraining.util.generation_utils import generate_autoregressive
 from scaletraining.util.model_stats import (
     count_parameters,
     humanize_bytes,
