@@ -1,0 +1,19 @@
+## Optimizer and learning rate schedule
+
+lr: 0.02
+muon_lr: 0.02
+beta: 0.9
+beta2: 0.999
+weight_decay: 0.0
+ns_iters: 5
+eps: 1e-8
+primary_optimizer: muon
+use_baseline_adam: false
+baseline_adam_config:
+  lr: 1e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+
+lr_schedule: cosine
+warmup_tokens: 1000000
+min_lr_scale: 0.1

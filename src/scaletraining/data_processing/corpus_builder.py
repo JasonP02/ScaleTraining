@@ -13,7 +13,7 @@ from transformers import AutoTokenizer
 
 from scaletraining.data_processing.batch_packer import pack_and_save
 from scaletraining.data_processing.tokenization import get_tokenizer
-from scaletraining.util import _cfg_subset, packed_dir, read_metadata, tokenized_dir, write_metadata
+from scaletraining.util import _cfg_subset, get_packed_directory, read_metadata, get_tokenized_directory, write_metadata
 
 
 TOKENS_PER_GB = 250_000_000
@@ -204,8 +204,8 @@ def tokenize_and_pack(raw_dir: Path, flat_cfg, tokenizer_name: str, max_seq_len:
     dataset = load_dataset("json", data_files=data_files)
     tokenizer, eos_id = get_tokenizer(tokenizer_name)
 
-    tok_dir = Path(tokenized_dir(flat_cfg, for_training=True))
-    pk_dir = Path(packed_dir(flat_cfg))
+    tok_dir = Path(get_tokenized_directory(flat_cfg, for_training=True))
+    pk_dir = Path(get_packed_directory(flat_cfg))
     tok_dir.mkdir(parents=True, exist_ok=True)
     pk_dir.mkdir(parents=True, exist_ok=True)
 

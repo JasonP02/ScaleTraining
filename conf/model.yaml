@@ -1,0 +1,17 @@
+## Transformer architecture knobs
+
+vocab_size: 50257
+n_layer: 5
+max_seq_len: 2048
+n_head: 8
+n_embed: 512
+n_hidden: 2048
+bias: true
+UE_bias: false
+attn_dropout: 0.2
+resid_dropout: 0.2
+use_checkpoint: true
+use_rope: true
+rope_config:
+  theta: 10000
+  use_complex: true

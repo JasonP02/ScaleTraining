@@ -5,7 +5,7 @@ import hydra
 from omegaconf import DictConfig
 from scaletraining.util.artifacts import write_metadata
 from scaletraining.util.config import _cfg_subset, flatten_cfg
-from scaletraining.util.path_utils import tokenized_dir
+from scaletraining.util.path_utils import get_tokenized_directory
 from pathlib import Path
 
 
@@ -84,15 +84,8 @@ def get_tokenizer(tok_name: str):
                 else:
                     result = self._tokenizer.encode(text)
                     input_ids = result.ids
-                
-                output = {"input_ids": input_ids}
-                if kwargs.get("return_attention_mask", False):
-                    if isinstance(text, list):
-                        output["attention_mask"] = [[1] * len(ids) for ids in input_ids]
-                    else:
-                        output["attention_mask"] = [1] * len(input_ids)
-                
-                return output
+
+                return {"input_ids": input_ids}
         
         tok = LocalTokenizer(tokenizer_obj)
         
@@ -109,7 +102,7 @@ def get_tokenizer(tok_name: str):
 
 
 def tokenize_dataset(cfg) -> None:
-    """Tokenize text -> input_ids (+ optional attention_mask) and save to disk.
+    """Tokenize text -> input_ids and save to disk.
 
     Appends a single EOS to each sequence to enable concatenation+packing cleanly.
 
@@ -118,7 +111,6 @@ def tokenize_dataset(cfg) -> None:
              - tokenizer_name: str
              - max_seq_len: int
              - tokenized_path: str
-             - use_attention_mask: bool
              - num_proc: int
              - hf_dataset_names: str | dict
     """
@@ -130,7 +122,7 @@ def tokenize_dataset(cfg) -> None:
     print(f"Using dataset-specific tokenizer: {tokenizer_name}")
     
     tok, eos_id = get_tokenizer(tokenizer_name)
-    save_path = tokenized_dir(cfg)
+    save_path = get_tokenized_directory(cfg)
     max_len = int(cfg.max_seq_len)
 
     try:

@@ -4,7 +4,7 @@ import hydra
 from omegaconf import DictConfig
 from scaletraining.util.artifacts import write_metadata
 from scaletraining.util.config import _cfg_subset, flatten_cfg
-from scaletraining.util.path_utils import packed_dir, tokenized_dir
+from scaletraining.util.path_utils import get_packed_directory, get_tokenized_directory
 
 def group_texts(examples, block_size: int):
     '''
@@ -78,8 +78,8 @@ def main(cfg: DictConfig) -> None:
     Uses tokenized_dir(cfg) as input and writes packed blocks to packed_dir(cfg).
     """
     cfg = flatten_cfg(cfg)
-    tok_dir = tokenized_dir(cfg, for_training=True)
-    pk_dir = packed_dir(cfg)
+    tok_dir = get_tokenized_directory(cfg, for_training=True)
+    pk_dir = get_packed_directory(cfg)
     pack_and_save(
         tokenized_path=tok_dir,
         packed_path=pk_dir,

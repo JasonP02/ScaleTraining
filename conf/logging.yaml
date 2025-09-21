@@ -1,4 +1,4 @@
-## Logging, outputs, and generation defaults
+## Logging controls
 
 wandb_project_name: tiny-stories-base
 debug_memory: true
@@ -7,10 +7,3 @@ log_implementation_details: true
 
 log_dataset_artifacts: false
 log_model_artifacts: false
-
-prompt: "There was a star ship in the sky and "
-model_path: "outputs/v=004acfd1__20250917T111817Z/model.pt"
-generation_max_tokens: 1000
-generation_temperature: 1.0
-generation_top_k: 50
-generate_after_train: false

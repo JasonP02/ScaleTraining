@@ -14,7 +14,7 @@ from omegaconf import DictConfig
 
 from scaletraining.data_processing.tokenization import tokenize_dataset
 from scaletraining.data_processing.batch_packer import pack_and_save
-from scaletraining.util import _cfg_subset, flatten_cfg, packed_dir, tokenized_dir, write_metadata
+from scaletraining.util import _cfg_subset, flatten_cfg, get_packed_directory, get_tokenized_directory, write_metadata
 
 
 def _as_list(x: Any) -> list:
@@ -46,8 +46,8 @@ def main(cfg: DictConfig) -> None:
         tokenize_dataset(sub)
 
         # Pack
-        tok_dir = tokenized_dir(sub)
-        pk_dir = packed_dir(sub)
+        tok_dir = get_tokenized_directory(sub)
+        pk_dir = get_packed_directory(sub)
         pack_and_save(
             tokenized_path=tok_dir,
             packed_path=pk_dir,

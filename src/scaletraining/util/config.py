@@ -10,7 +10,6 @@ _FINGERPRINT_FIELDS = (
     "hf_dataset_names",
     "tokenizer_name",
     "max_seq_len",
-    "use_attention_mask",
 )
 
 
@@ -31,15 +30,12 @@ def config_fingerprint(cfg: Any) -> str:
 
 
 def flatten_cfg(cfg: Any) -> Any:
-    """Flatten namespaced Hydra config groups for ease of use"""
+    """Return a SimpleNamespace view of a Hydra config."""
 
     from types import SimpleNamespace
 
     if isinstance(cfg, SimpleNamespace):
-        # Return a shallow copy so callers can mutate safely
         return SimpleNamespace(**vars(cfg))
-
-    group_names = ("transformer", "tokenizer", "logging", "moe", "paths")
 
     try:
         from omegaconf import OmegaConf
@@ -58,32 +54,17 @@ def flatten_cfg(cfg: Any) -> Any:
         def is_config(node: Any) -> bool:
             return hasattr(node, "keys")
 
-    if not any(hasattr(cfg, group) for group in group_names):
-        if is_config(cfg):
-            values = to_dict(cfg)
-            if isinstance(values, dict):
-                return SimpleNamespace(**values)
-        if isinstance(cfg, dict):
-            return SimpleNamespace(**cfg)
-        if hasattr(cfg, "__dict__"):
-            return SimpleNamespace(**vars(cfg))
+    if is_config(cfg):
+        values = to_dict(cfg)
+    elif isinstance(cfg, dict):
+        values = dict(cfg)
+    elif hasattr(cfg, "__dict__"):
+        return SimpleNamespace(**vars(cfg))
+    else:
         return SimpleNamespace()
 
-    merged: Dict[str, Any] = {}
-    for group in group_names:
-        try:
-            sub = cfg.get(group) if hasattr(cfg, "get") else getattr(cfg, group, None)
-        except Exception:
-            sub = getattr(cfg, group, None)
-        if sub is not None:
-            values = to_dict(sub)
-            if isinstance(values, dict):
-                # Hydra group DictConfigs often serialize as {group: {...}}
-                nested = values.get(group)
-                if isinstance(nested, dict) and len(values) == 1:
-                    values = nested
-                merged.update(values)
-    return SimpleNamespace(**merged)
+    values.pop("hydra", None)
+    return SimpleNamespace(**values)
 
 
 __all__ = ["_cfg_subset", "config_fingerprint", "flatten_cfg"]

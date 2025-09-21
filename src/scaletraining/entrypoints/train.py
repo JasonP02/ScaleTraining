@@ -22,11 +22,11 @@ from scaletraining.util import (
     configure_rocm_and_sdp,
     flatten_cfg,
     init_wandb,
-    packed_dir,
+    get_packed_directory,
     read_metadata,
     resolve_device,
     save_model,
-    tokenized_dir,
+    get_tokenized_directory,
 )
 from scaletraining.model.training_loop import training_run
 from scaletraining.util.generation_utils import generate_autoregressive
@@ -67,8 +67,8 @@ def main(cfg: DictConfig) -> float:
     # Update W&B run name based on the dataset-specific tokenizer actually used
     try:
         import wandb
-        tok_dir = tokenized_dir(flat)
-        pk_dir = packed_dir(flat)
+        tok_dir = get_tokenized_directory(flat)
+        pk_dir = get_packed_directory(flat)
         meta = read_metadata(pk_dir) or read_metadata(tok_dir)
         tok_path = (meta or {}).get("tokenizer_name")
         if tok_path:

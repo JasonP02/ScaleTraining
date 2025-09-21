@@ -34,9 +34,11 @@ def eval_on_gsm8k(cfg, model, tok):
     loader_kwargs = get_loader_kwargs(cfg)
     print(loader_kwargs)
 
+    batch_size = int(getattr(cfg, "eval_batch_size", 1))
+
     dataloader = DataLoader(
         tokenized_dataset,
-        batch_size=cfg.eval_batch_size,
+        batch_size=batch_size,
         shuffle=False,
         drop_last=False,
         **loader_kwargs,

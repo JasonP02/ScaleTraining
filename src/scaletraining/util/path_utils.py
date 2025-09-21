@@ -12,8 +12,14 @@ def _sanitize(value: str) -> str:
     return str(value).replace("/", "-").replace(" ", "_")
 
 
-def tokenized_dir(cfg: Any, for_training: bool) -> str:
-    """Return the path for tokenized shards."""
+def get_tokenized_directory(cfg: Any, for_training: bool = True) -> str:
+    """
+    Return the path for tokenized shards based on current config.
+    Knobs:
+        huggingface dataset(s)
+        tokenizer 
+        sequence length
+    """
 
     fingerprint = config_fingerprint(cfg)[:8]
     if for_training:
@@ -24,12 +30,12 @@ def tokenized_dir(cfg: Any, for_training: bool) -> str:
     name = (
         f"{tag}ds={_sanitize(cfg.hf_dataset_names)}__"
         f"tok={_sanitize(cfg.tokenizer_name)}__"
-        f"L={cfg.max_seq_len}__mask={int(cfg.use_attention_mask)}__v={fingerprint}"
+        f"L={cfg.max_seq_len}__v={fingerprint}"
     )
     return os.path.join(base, name)
 
 
-def packed_dir(cfg: Any) -> str:
+def get_packed_directory(cfg: Any, for_training: bool = True) -> str:
     """Return the directory path for packed batches."""
 
     fingerprint = config_fingerprint(cfg)[:8]
@@ -38,9 +44,9 @@ def packed_dir(cfg: Any) -> str:
     name = (
         f"{tag}ds={_sanitize(cfg.hf_dataset_names)}__"
         f"tok={_sanitize(cfg.tokenizer_name)}__"
-        f"L={cfg.max_seq_len}__mask={int(cfg.use_attention_mask)}__v={fingerprint}"
+        f"L={cfg.max_seq_len}__v={fingerprint}"
     )
     return os.path.join(base, name)
 
 
-__all__ = ["tokenized_dir", "packed_dir", "_sanitize"]
+__all__ = ["get_tokenized_directory", "get_packed_directory", "_sanitize"]

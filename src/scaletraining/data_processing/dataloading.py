@@ -8,10 +8,10 @@ from scaletraining.data_processing.batch_packer import pack_and_save
 from scaletraining.data_processing.tokenization import tokenize_dataset
 from scaletraining.util.artifacts import read_metadata
 from scaletraining.util.config import _cfg_subset
-from scaletraining.util.path_utils import packed_dir, tokenized_dir
+from scaletraining.util.path_utils import get_packed_directory, get_tokenized_directory
 from dataclasses import dataclass
 
-def check_tokenizer_metadata(cfg, dataset_root, tok_dir, pk_dir):
+def check_tokenizer_metadata_match(cfg, dataset_root, tok_dir, pk_dir):
     meta = read_metadata(dataset_root) or read_metadata(tok_dir) or read_metadata(pk_dir)
     if meta:
         if cfg.strict_dataset_compat:
@@ -60,13 +60,13 @@ def build_loaders(cfg, for_training: bool = True):
     work directly from the tokenized split directories so evaluation code can
     reuse variable-length text without repacking.
     """
-    tok_dir = tokenized_dir(cfg, for_training)
+    tok_dir = get_tokenized_directory(cfg, for_training)
     tokenized_train_dir = os.path.join(tok_dir, "train")
     # We dont want to tokenize for evals.
     if not is_tokenized(tokenized_train_dir) and for_training:
         tokenize_dataset(cfg)
         
-    pk_dir = packed_dir(cfg, for_training)  # expected packed dataset location for this config
+    pk_dir = get_packed_directory(cfg, for_training)  # expected packed dataset location for this config
     if for_training:
         dataset_root = pk_dir
         packed_data_dir = os.path.join(pk_dir, "train")
@@ -83,12 +83,13 @@ def build_loaders(cfg, for_training: bool = True):
     else:
         dataset_root = tok_dir
     # Compatibility/metadata sync with persisted artifacts.
-    check_tokenizer_metadata(cfg, dataset_root, tok_dir, pk_dir)
+    check_tokenizer_metadata_match(cfg, dataset_root, tok_dir, pk_dir)
 
     train = load_from_disk(f"{dataset_root}/train").with_format("torch", columns=["input_ids"])
     loader_kwargs = get_loader_kwargs(cfg)
 
-    bsz = int(cfg.batch_size if for_training else cfg.eval_bsz)
+    eval_bsz = getattr(cfg, "eval_batch_size", cfg.batch_size)
+    bsz = int(cfg.batch_size if for_training else eval_bsz)
 
     train_loader = DataLoader(
         train,
