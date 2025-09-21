@@ -78,7 +78,7 @@ def main(cfg: DictConfig) -> None:
     Uses tokenized_dir(cfg) as input and writes packed blocks to packed_dir(cfg).
     """
     cfg = flatten_cfg(cfg)
-    tok_dir = tokenized_dir(cfg)
+    tok_dir = tokenized_dir(cfg, for_training=True)
     pk_dir = packed_dir(cfg)
     pack_and_save(
         tokenized_path=tok_dir,

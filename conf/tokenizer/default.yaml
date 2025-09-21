@@ -1,34 +1,35 @@
 ## Tokenization and dataset knobs (namespaced)
 
-# Dataset selection and IO
-hf_dataset_names: math_dataset/arithmetic__mul
-  # roneneldan/TinyStories,
+tokenizer:
+  # Dataset selection and IO
+  hf_dataset_names: 
 
-tokenized_train_path: data/train/tokenized/tokenized_base
-tokenized_eval_path: data/test/tokenized/tokenized_base
-batched_tokenized_path: data/train/tokenized/tokenized_batched
-dataset_tag: ""
-strict_dataset_compat: false
+  tokenized_train_path: data/train/tokenized/tokenized_base
+  tokenized_eval_path: data/test/tokenized/tokenized_base
+  batched_tokenized_train_path: data/train/tokenized/tokenized_batched
+  batched_tokenized_eval_path: data/eval/tokenized/tokenized_batched
+  dataset_tag: ""
+  strict_dataset_compat: false
 
-# Tokenization behavior
-tokenizer_name: EleutherAI/gpt-neo-125M  # Fallback tokenizer; dataset-specific tokenizers preferred
-tokenizer_type: hf
-use_attention_mask: false
-num_proc: 8
+  # Tokenization behavior
+  tokenizer_name: meta-llama/Llama-2-13b-hf  # Fallback tokenizer; dataset-specific tokenizers preferred
+  tokenizer_type: hf
+  use_attention_mask: false
+  num_proc: 8
 
-# Packing behavior
-do_packing: false
-pack_num_proc: 8
-pack_map_batch_size: 400
-pack_writer_batch_size: 4000
+  # Packing behavior
+  do_packing: false # We re-pack regardless of the existing fingerprints
+  pack_num_proc: 8
+  pack_map_batch_size: 400
+  pack_writer_batch_size: 4000
 
-# DataLoader performance knobs (used at train time)
-loader_num_workers: 4          # >0 enables background data loading
-loader_pin_memory: true        # faster H2D copies on GPU
-loader_persistent_workers: true
-loader_prefetch_factor: 2
+  # DataLoader performance knobs (used at train time)
+  loader_num_workers: 4          # >0 enables background data loading
+  loader_pin_memory: true        # faster H2D copies on GPU
+  loader_persistent_workers: true
+  loader_prefetch_factor: 2
 
-# Train a dataset-specific tokenizer (paths are project-relative)
-tokenizer_save_path: tokenizers/tokenizer.json
-tokenizer_vocab_size: 12800
-tokenizer_train_data: data/train/raw
+  # Train a dataset-specific tokenizer (paths are project-relative)
+  tokenizer_save_path: tokenizers/tokenizer.json
+  tokenizer_vocab_size: 12800
+  tokenizer_train_data: data/train/raw

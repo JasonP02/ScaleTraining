@@ -12,11 +12,14 @@ def _sanitize(value: str) -> str:
     return str(value).replace("/", "-").replace(" ", "_")
 
 
-def tokenized_dir(cfg: Any) -> str:
+def tokenized_dir(cfg: Any, for_training: bool) -> str:
     """Return the path for tokenized shards."""
 
     fingerprint = config_fingerprint(cfg)[:8]
-    base = cfg.tokenized_path
+    if for_training:
+        base = cfg.tokenized_train_path
+    else:
+        base = cfg.tokenized_eval_path
     tag = f"tag={_sanitize(cfg.dataset_tag)}__" if getattr(cfg, "dataset_tag", "") else ""
     name = (
         f"{tag}ds={_sanitize(cfg.hf_dataset_names)}__"

@@ -1,5 +1,5 @@
 Working on:
-Evaluations with arc-easy
+Dataset selection for large run
 
 Next task:
 

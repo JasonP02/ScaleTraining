@@ -62,7 +62,7 @@ def main(cfg: DictConfig) -> float:
 
     init_wandb(flat, cfg_dict)
 
-    train_loader, val_loader = build_loaders(flat)
+    train_loader, val_loader = build_loaders(flat, for_training=True)
 
     # Update W&B run name based on the dataset-specific tokenizer actually used
     try:

@@ -24,11 +24,12 @@ def get_dataset_text_files(cfg: DictConfig) -> list[str]:
     data_dir.mkdir(parents=True, exist_ok=True)
     
     # Handle single dataset or list
-    dataset_specs = cfg.hf_dataset_names if isinstance(cfg.hf_dataset_names, list) else [cfg.hf_dataset_names]
+    dataset_specs = cfg.hf_dataset_names.split(",") if isinstance(cfg.hf_dataset_names, str) else cfg.hf_dataset_names
     
     text_files = []
     
     for spec in dataset_specs:
+        print(spec)
         # Create a safe filename from the dataset spec
         safe_name = spec.replace("/", "_").replace("-", "_")
         text_file = data_dir / f"{safe_name}.txt"

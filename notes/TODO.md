@@ -10,13 +10,13 @@
     - [x]Research optimizations that can be done in the training loop
 - [x]Integrate detailed W&B logging for analysis and sweeps
     - [ ]Use loss over total tokens during training as primary metric
-- [ ]Integrate basic evaluation pipeline for larger models
+- [x]Integrate basic evaluation pipeline for larger models
 - [ ]Training
     - [ ]
 
 ## Phase 1.5: Evals
 - [ ] Zipf lens: understand how the model performs for low-frequency tokens
-- [ ] loss vs flops: estimate flops/step 
+- [x] loss vs flops: estimate flops/step 
 - [ ] evaluations like lambda, wikitext ppl, hellaswag, piqa, arc-easy: for multiple-choice we feed the answer but track the logprobs. for others, it is just text completion.
 - [ ] ppl vs context length: cut the output sequences to various lengths, and visualise perplexity on data
 - [ ] moe expert routing etc: look at how the expert loading actually works during training. what % of tokens do the experts get? (we can prune experts that get no tokens, or change params to improve routing)

@@ -35,19 +35,42 @@ def flatten_cfg(cfg: Any) -> Any:
 
     from types import SimpleNamespace
 
+    if isinstance(cfg, SimpleNamespace):
+        # Return a shallow copy so callers can mutate safely
+        return SimpleNamespace(**vars(cfg))
+
+    group_names = ("transformer", "tokenizer", "logging", "moe")
+
     try:
         from omegaconf import OmegaConf
 
         def to_dict(node: Any) -> Dict[str, Any]:
             return OmegaConf.to_container(node, resolve=True) if node is not None else {}
 
+        def is_config(node: Any) -> bool:
+            return OmegaConf.is_config(node)
+
     except Exception:
 
         def to_dict(node: Any) -> Dict[str, Any]:
             return dict(node) if node is not None else {}
 
+        def is_config(node: Any) -> bool:
+            return hasattr(node, "keys")
+
+    if not any(hasattr(cfg, group) for group in group_names):
+        if is_config(cfg):
+            values = to_dict(cfg)
+            if isinstance(values, dict):
+                return SimpleNamespace(**values)
+        if isinstance(cfg, dict):
+            return SimpleNamespace(**cfg)
+        if hasattr(cfg, "__dict__"):
+            return SimpleNamespace(**vars(cfg))
+        return SimpleNamespace()
+
     merged: Dict[str, Any] = {}
-    for group in ("transformer", "tokenizer", "logging", "moe"):
+    for group in group_names:
         try:
             sub = cfg.get(group) if hasattr(cfg, "get") else getattr(cfg, group, None)
         except Exception:
@@ -55,6 +78,10 @@ def flatten_cfg(cfg: Any) -> Any:
         if sub is not None:
             values = to_dict(sub)
             if isinstance(values, dict):
+                # Hydra group DictConfigs often serialize as {group: {...}}
+                nested = values.get(group)
+                if isinstance(nested, dict) and len(values) == 1:
+                    values = nested
                 merged.update(values)
     return SimpleNamespace(**merged)
 

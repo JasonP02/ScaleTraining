@@ -119,8 +119,10 @@ def eval_on_arc(cfg, model, tok):
             option_ids = shifted_targets[:, prompt_len-1:]
 
             log_probs = F.log_softmax(option_logits, dim=-1)
+            # Lookup to determine our scores
             option_log_probs = torch.gather(log_probs, -1, option_ids.unsqueeze(-1)).squeeze(-1)
 
+            # Sum probs to get our value
             total_option_score = option_log_probs.sum(dim=-1).item()
             log_probs_per_option.append(total_option_score)
 

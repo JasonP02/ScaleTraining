@@ -19,7 +19,7 @@ early_stop_min_delta: 0.0005
 # Transformer Architecture
 vocab_size: 50257       # auto-set from tokenizer metadata if available
 n_layer: 5
-max_seq_len: 1000
+max_seq_len: 2048
 n_head: 8
 n_embed: 512
 n_hidden: 2048
