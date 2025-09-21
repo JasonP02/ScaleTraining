@@ -1,3 +1,5 @@
+from functools import partial
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -90,18 +92,36 @@ class AttentionBlock(nn.Module):
         return self.resid_dropout(self.out_projection(y))
 
 
+
+def _mlp_activation(name: str):
+    name = (name or "relu").lower()
+    table = {
+        "relu": F.relu,
+        "gelu": F.gelu,
+        "gelu_tanh": partial(F.gelu, approximate="tanh"),
+        "gelu_new": partial(F.gelu, approximate="tanh"),
+        "silu": F.silu,
+        "swish": F.silu,
+    }
+    fn = table.get(name)
+    if fn is None:
+        raise ValueError(f"Unsupported MLP activation '{name}'. Update _mlp_activation to add it.")
+    return fn
+
+
 class MLPBlock(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.Wh = nn.Linear(cfg.n_embed, cfg.n_hidden, bias=cfg.bias)
         self.We = nn.Linear(cfg.n_hidden, cfg.n_embed, bias=cfg.bias)
         self.dropout = nn.Dropout(cfg.resid_dropout)
+        self.activation = _mlp_activation(getattr(cfg, "activation", "relu"))
 
     def forward(self,x):
         residual = x
         # x -> (B T E)
         x = self.Wh(x)
-        x = F.relu(x)
+        x = self.activation(x)
         x = self.We(x)
         x = self.dropout(x)
         return x + residual

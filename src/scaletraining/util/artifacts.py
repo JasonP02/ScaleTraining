@@ -63,6 +63,7 @@ def save_run_manifest(cfg: Any, out_dir: str, extra: Optional[Dict[str, Any]] = 
             "n_head": cfg.n_head,
             "n_embed": cfg.n_embed,
             "n_hidden": cfg.n_hidden,
+            "activation": getattr(cfg, "activation", "relu"),
             "vocab_size": cfg.vocab_size,
             "UE_bias": cfg.UE_bias,
             "use_checkpoint": cfg.use_checkpoint,
