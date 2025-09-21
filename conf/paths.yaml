@@ -1,0 +1,10 @@
+# Centralized filesystem paths used across data prep and training.
+
+tokenized_train_path: data/train/tokenized/tokenized_base
+tokenized_eval_path: data/test/tokenized/tokenized_base
+batched_tokenized_path: data/train/tokenized/tokenized_batched
+
+tokenizer_save_path: tokenizers/tokenizer.json
+tokenizer_train_data: data/train/raw
+
+output_dir: outputs

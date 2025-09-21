@@ -39,7 +39,7 @@ def flatten_cfg(cfg: Any) -> Any:
         # Return a shallow copy so callers can mutate safely
         return SimpleNamespace(**vars(cfg))
 
-    group_names = ("transformer", "tokenizer", "logging", "moe")
+    group_names = ("transformer", "tokenizer", "logging", "moe", "paths")
 
     try:
         from omegaconf import OmegaConf

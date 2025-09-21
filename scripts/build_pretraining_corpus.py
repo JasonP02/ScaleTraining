@@ -41,7 +41,7 @@ def main() -> None:
     args = parser.parse_args()
 
     os.chdir(PROJECT_ROOT)
-    with initialize(config_path="../conf", version_base=None):
+    with initialize(config_path="conf", version_base=None):
         cfg = compose(config_name="config")
 
     flat = flatten_cfg(cfg)

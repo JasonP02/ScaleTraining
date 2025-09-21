@@ -1,0 +1,26 @@
+# Tokenization, dataset selection, and packing knobs.
+
+hf_dataset_names:
+dataset_tag: ""
+strict_dataset_compat: false
+
+# Tokenization behavior
+tokenizer_name: meta-llama/Llama-2-13b-hf
+tokenizer_type: hf
+use_attention_mask: false
+num_proc: 8
+
+# Packing behavior
+do_packing: false
+pack_num_proc: 8
+pack_map_batch_size: 400
+pack_writer_batch_size: 4000
+
+# DataLoader knobs (used during training)
+loader_num_workers: 4
+loader_pin_memory: true
+loader_persistent_workers: true
+loader_prefetch_factor: 2
+
+# Dataset-specific tokenizer training
+tokenizer_vocab_size: 12800

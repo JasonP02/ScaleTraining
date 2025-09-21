@@ -1,18 +1,18 @@
-# MoE Architecture
+# Mixture-of-Experts configuration
+
 use_moe: false
 moe_n_experts: 8
 moe_top_k: 2
 moe_n_hidden: 1024
 moe_activation: "swiGLU"
 moe_use_shared: false
-moe_n_layers: ${transformer.n_layer}
+moe_n_layers: ${n_layer}
 
 moe_router_noise: 0.005
 moe_router_temp: 1.0
 moe_lb_coef: 0.01
 
-# Optional schedules for MoE hyperparameters (tokens-based)
-# Schedules: 'none' | 'linear' | 'cosine'
+# Optional schedules (token-based)
 moe_router_temp_schedule: none
 moe_router_temp_start: ${.moe_router_temp}
 moe_router_temp_end: 1.0
