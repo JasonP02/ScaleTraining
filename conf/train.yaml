@@ -1,7 +1,7 @@
 ## Training runtime and token budget knobs
 
 device: cuda
-batch_size: 32
+batch_size: 16
 accum_steps: 4
 grad_clip_norm: 1.0
 max_train_tokens: 40000000

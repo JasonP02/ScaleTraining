@@ -14,7 +14,7 @@ if str(SRC_PATH) not in sys.path:
 
 from hydra import compose, initialize
 
-from scaletraining.data_processing.corpus_builder import TOKENS_PER_GB, build_mixed_corpus
+from scaletraining.data_processing.corpus_builder import build_mixed_corpus
 from scaletraining.util import flatten_cfg
 
 
@@ -27,11 +27,9 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset-tag", help="Optional dataset_tag override.")
     parser.add_argument("--val-ratio", type=float, default=0.01)
     parser.add_argument("--num-proc", type=int, default=8)
-    parser.add_argument("--include-code", action="store_true", help="Include permissive GitHub slice.")
-    parser.add_argument("--sources-config", type=Path, help="JSON/YAML describing custom sources.")
     parser.add_argument("--seed", type=int, default=13)
     parser.add_argument("--summaries-path", type=Path, help="Optional JSON file capturing per-source stats.")
-    parser.add_argument("--tokens-per-gb", type=float, default=TOKENS_PER_GB)
+    parser.add_argument("--hf-token", help="Hugging Face access token for gated models/datasets.")
     parser.add_argument("--reuse-raw", action="store_true", help="Skip re-streaming if raw jsonl exists.")
     return parser
 
@@ -41,10 +39,13 @@ def main() -> None:
     args = parser.parse_args()
 
     os.chdir(PROJECT_ROOT)
-    with initialize(config_path="conf", version_base=None):
+    with initialize(config_path="../conf", version_base=None):
         cfg = compose(config_name="config")
 
     flat = flatten_cfg(cfg)
+
+    if args.hf_token:
+        os.environ["HUGGING_FACE_HUB_TOKEN"] = args.hf_token
 
     dataset_id = args.dataset_id
     cfg_dataset = getattr(flat, "hf_dataset_names", None)
@@ -79,11 +80,8 @@ def main() -> None:
         tokenizer_name=tokenizer_name,
         max_seq_len=max_seq_len,
         output_root=args.output_root,
-        include_code=args.include_code,
         val_ratio=args.val_ratio,
         num_proc=args.num_proc,
-        tokens_per_gb=args.tokens_per_gb,
-        sources_config=args.sources_config,
         seed=args.seed,
         reuse_raw=args.reuse_raw,
     )

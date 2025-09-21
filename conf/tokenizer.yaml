@@ -1,11 +1,12 @@
 # Tokenization, dataset selection, and packing knobs.
 
-hf_dataset_names:
+hf_dataset_names: refined-web-mix
 dataset_tag: ""
 strict_dataset_compat: false
+hf_token: ${oc.env:HUGGING_FACE_HUB_TOKEN, ""}
 
 # Tokenization behavior
-tokenizer_name: meta-llama/Llama-2-13b-hf
+tokenizer_name: bigcode/starcoder2-tokenizer
 tokenizer_type: hf
 num_proc: 8
 

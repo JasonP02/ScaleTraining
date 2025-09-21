@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from typing import Any, Dict
 
 
@@ -64,6 +65,11 @@ def flatten_cfg(cfg: Any) -> Any:
         return SimpleNamespace()
 
     values.pop("hydra", None)
+
+    token = values.get("hf_token") or values.get("hf_auth_token")
+    if token:
+        os.environ["HUGGING_FACE_HUB_TOKEN"] = str(token)
+
     return SimpleNamespace(**values)
 
 

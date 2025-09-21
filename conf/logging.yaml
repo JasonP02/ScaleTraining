@@ -1,6 +1,6 @@
 ## Logging controls
 
-wandb_project_name: tiny-stories-base
+wandb_project_name: fine-web-pretrain
 debug_memory: true
 experiment_tags: []
 log_implementation_details: true

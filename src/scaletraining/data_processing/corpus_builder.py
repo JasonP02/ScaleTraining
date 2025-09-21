@@ -7,8 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
+try:
+    from tqdm.auto import tqdm
+except Exception:  # pragma: no cover - fallback when tqdm is unavailable
+    tqdm = None  # type: ignore
+
 from datasets import IterableDataset, load_dataset
-from omegaconf import OmegaConf
 from transformers import AutoTokenizer
 
 from scaletraining.data_processing.batch_packer import pack_and_save
@@ -38,7 +42,14 @@ def _concat_fields(example: dict, fields: Iterable[str], separator: str) -> str:
                 if isinstance(item, str):
                     parts.append(item)
         elif isinstance(value, (list, tuple)):
-            parts.extend(str(item) for item in value if isinstance(item, str))
+            for item in value:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    for key in ("text", "body", "content", "answer"):
+                        maybe = item.get(key)
+                        if isinstance(maybe, str):
+                            parts.append(maybe)
     return separator.join(part for part in parts if part)
 
 
@@ -59,6 +70,8 @@ class SourceSpec:
     cleaner: CleanerFn = _default_clean
     description: str = ""
     keep_probability: float = 1.0
+    use_tokenizer_for_count: bool = False
+    tokens_per_char: float = 0.25
 
     def target_tokens(self) -> int:
         return int(self.target_gb * self.tokens_per_gb)
@@ -69,57 +82,40 @@ class SourceSpec:
         return _concat_fields(example, self.text_fields, self.separator)
 
 
-def default_sources(include_code: bool = False) -> list[SourceSpec]:
-    specs: list[SourceSpec] = [
-        SourceSpec(
-            dataset="HuggingFaceM4/RefinedWeb",
-            text_fields=("text",),
-            target_gb=28.0,
-            description="General cleaned web (RefinedWeb)",
-        ),
-        SourceSpec(
-            dataset="wikipedia",
-            subset="20231101.en",
-            text_fields=("text",),
-            target_gb=5.0,
-            description="English Wikipedia",
-        ),
-        SourceSpec(
-            dataset="lvwerra/stack-exchange-paired",
-            subset="math_stackexchange",
-            text_fields=("question", "answer"),
-            separator="\n\n",
-            target_gb=6.0,
-            description="StackExchange (math)",
-        ),
-        SourceSpec(
-            dataset="arxiv_dataset",
-            subset="metadata",
-            text_fields=("title", "abstract"),
-            separator="\n\n",
-            target_gb=6.0,
-            description="arXiv titles + abstracts",
-        ),
-    ]
-    if include_code:
-        specs.append(
-            SourceSpec(
-                dataset="bigcode/the-stack-smol",
-                text_fields=("content",),
-                target_gb=6.0,
-                description="Permissive GitHub subset",
-                min_chars=20,
-            )
-        )
-    return specs
-
-
-def _load_sources_config(path: Path) -> list[SourceSpec]:
-    if path.suffix.lower() in {".yml", ".yaml"}:
-        data = OmegaConf.to_container(OmegaConf.load(str(path)), resolve=True)
-    else:
-        data = json.loads(path.read_text())
-    return [SourceSpec(**entry) for entry in data]
+# Edit this list directly to control which datasets are streamed.
+SOURCES: list[SourceSpec] = [
+    SourceSpec(
+        dataset="HuggingFaceFW/fineweb-edu",
+        subset="sample-10BT",
+        text_fields=("text",),
+        target_gb=0.1,
+        description="FineWeb EDU sample",
+    ),
+    SourceSpec(
+        dataset="wikimedia/wikipedia",
+        subset="20231101.en",
+        text_fields=("text",),
+        target_gb=0.1,
+        description="English Wikipedia",
+    ),
+    SourceSpec(
+        dataset="lvwerra/stack-exchange-paired",
+        split="test",
+        text_fields=("question", "response_j"),
+        separator="\n\n",
+        target_gb=0.1,
+        description="StackExchange (multi-domain)",
+    ),
+    SourceSpec(
+        dataset="gfissore/arxiv-abstracts-2021",
+        subset=None,
+        split="train",
+        text_fields=("title", "abstract"),
+        separator="\n\n",
+        target_gb=0.1,
+        description="arXiv titles + abstracts",
+    ),
+]
 
 
 class JsonlTokenWriter:
@@ -164,7 +160,14 @@ def stream_source(
     train_before = train_writer.examples
     val_before = val_writer.examples
 
-    for example in stream:
+    iterator = stream
+    progress_bar = None
+    if tqdm is not None:
+        desc = f"Streaming {spec.description or spec.dataset}"
+        progress_bar = tqdm(iterator, desc=desc, unit="ex", dynamic_ncols=True)
+        iterator = progress_bar
+
+    for example in iterator:
         if spec.filter_fn and not spec.filter_fn(example):
             continue
         if rng.random() > spec.keep_probability:
@@ -172,18 +175,26 @@ def stream_source(
         text = spec.cleaner(spec.extract_text(example))
         if not text or len(text) < spec.min_chars:
             continue
-        encoded = tokenizer(text, add_special_tokens=False)
-        ids = encoded.get("input_ids")
-        if not ids:
-            continue
-        count = len(ids)
+        if spec.use_tokenizer_for_count:
+            encoded = tokenizer(text, add_special_tokens=False)
+            ids = encoded.get("input_ids")
+            if not ids:
+                continue
+            count = len(ids)
+        else:
+            count = max(1, int(len(text) * spec.tokens_per_char))
         total_tokens += count
         if rng.random() < val_ratio:
             val_writer.write(text, count)
         else:
             train_writer.write(text, count)
+        if progress_bar is not None:
+            progress_bar.set_postfix(tokens=f"{total_tokens/1e6:.1f}M", refresh=False)
         if total_tokens >= target_tokens:
             break
+
+    if progress_bar is not None:
+        progress_bar.close()
 
     return {
         "dataset": spec.dataset,
@@ -192,6 +203,7 @@ def stream_source(
         "collected_tokens": total_tokens,
         "train_examples": train_writer.examples - train_before,
         "val_examples": val_writer.examples - val_before,
+        "token_count_method": "tokenizer" if spec.use_tokenizer_for_count else "estimate",
     }
 
 
@@ -258,11 +270,8 @@ def build_mixed_corpus(
     tokenizer_name: str,
     max_seq_len: int,
     output_root: Path,
-    include_code: bool,
     val_ratio: float,
     num_proc: int,
-    tokens_per_gb: float,
-    sources_config: Optional[Path],
     seed: int,
     reuse_raw: bool,
 ) -> tuple[str, str, list[dict]]:
@@ -273,19 +282,16 @@ def build_mixed_corpus(
 
     if not reuse_raw:
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
-        tokenizer.model_max_length = max_seq_len
+        tokenizer.model_max_length = 1_000_000_000
+        try:
+            tokenizer.init_kwargs["model_max_length"] = 1_000_000_000
+        except Exception:
+            pass
 
         train_writer = JsonlTokenWriter(raw_dir / "train.jsonl")
         val_writer = JsonlTokenWriter(raw_dir / "val.jsonl")
 
-        if sources_config:
-            sources = _load_sources_config(sources_config)
-        else:
-            sources = default_sources(include_code=include_code)
-            for spec in sources:
-                spec.tokens_per_gb = int(tokens_per_gb)
-
-        for spec in sources:
+        for spec in SOURCES:
             print(f"Streaming {spec.description or spec.dataset} -> ~{spec.target_tokens():,} tokens")
             summary = stream_source(
                 spec,
@@ -331,6 +337,6 @@ def build_mixed_corpus(
 __all__ = [
     "SourceSpec",
     "TOKENS_PER_GB",
-    "default_sources",
+    "SOURCES",
     "build_mixed_corpus",
 ]

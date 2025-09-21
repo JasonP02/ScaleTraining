@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -16,6 +17,7 @@ import torch.nn as nn
 import torch
 
 from scaletraining.data_processing import build_loaders
+from scaletraining.data_processing.tokenization import get_tokenizer_name_from_dataset
 from scaletraining.model import TransformerNetwork
 from scaletraining.util import (
     clear_cuda_cache,
@@ -37,8 +39,51 @@ from scaletraining.util.model_stats import (
 )
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
+try:
+    from tokenizers import Tokenizer as _RawTokenizer
+except ModuleNotFoundError:  # pragma: no cover - optional dependency during partial installs
+    _RawTokenizer = None
+
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _resolve_vocab_size(flat: Any, meta: Optional[Dict[str, Any]]) -> None:
+    """Populate `flat.vocab_size` from metadata, tokenizer config, or tokenizer files."""
+
+    if getattr(flat, "vocab_size", None):
+        return
+
+    size = None
+    if meta:
+        size = meta.get("tokenizer_vocab_size") or meta.get("vocab_size")
+
+    if not size:
+        # Try dataset-specific tokenizer file, if it exists.
+        try:
+            dataset_specs = flat.hf_dataset_names
+            local_path = get_tokenizer_name_from_dataset(dataset_specs, getattr(flat, "tokenizer_vocab_size", None))
+            path_obj = Path(local_path)
+            if path_obj.exists() and _RawTokenizer is not None:
+                size = _RawTokenizer.from_file(str(path_obj)).get_vocab_size()
+        except Exception:
+            size = None
+
+    if not size:
+        # Fall back to the configured tokenizer (likely a HF model).
+        try:
+            tok = AutoTokenizer.from_pretrained(flat.tokenizer_name, use_fast=True)
+            size = tok.vocab_size
+        except Exception:
+            size = None
+
+    if not size:
+        size = getattr(flat, "tokenizer_vocab_size", None)
+
+    if not size:
+        raise RuntimeError("Unable to determine tokenizer vocab size; set model.vocab_size or tokenizer_vocab_size")
+
+    flat.vocab_size = int(size)
 
 
 @hydra.main(version_base=None, config_path=str(Path(__file__).parent.parent.parent.parent / "conf"), config_name="config")
@@ -65,6 +110,7 @@ def main(cfg: DictConfig) -> float:
     train_loader, val_loader = build_loaders(flat, for_training=True)
 
     # Update W&B run name based on the dataset-specific tokenizer actually used
+    meta = None
     try:
         import wandb
         tok_dir = get_tokenized_directory(flat)
@@ -79,6 +125,9 @@ def main(cfg: DictConfig) -> float:
     except Exception as _e:
         # Non-fatal: keep existing W&B name if metadata is unavailable
         pass
+
+    # Ensure model vocab matches the tokenizer used for this run.
+    _resolve_vocab_size(flat, meta)
 
     # Dataset artifact logging intentionally disabled.
 
