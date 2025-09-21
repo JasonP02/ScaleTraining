@@ -1,8 +1,7 @@
 Working on:
-Implementing the flops estimation into training/evals.
+Evaluations with arc-easy
 
 Next task:
-perplexity vs context length.
 
 Questions:
 - How do batching approaches affect model convergence / learning efficency & training speed 

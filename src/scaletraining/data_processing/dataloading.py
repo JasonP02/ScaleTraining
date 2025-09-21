@@ -50,6 +50,7 @@ def get_loader_kwargs(cfg):
         prefetch = getattr(cfg, "loader_prefetch_factor", None)
         if prefetch:
             loader_kwargs["prefetch_factor"] = int(prefetch)
+    return loader_kwargs
             
 def build_loaders(cfg, for_training: bool = True):
     """Build PyTorch DataLoaders from dataset artifacts.
