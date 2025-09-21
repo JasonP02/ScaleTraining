@@ -1,8 +1,11 @@
 ## Tokenization and dataset knobs (namespaced)
 
 # Dataset selection and IO
-hf_dataset_names: roneneldan/TinyStories
-tokenized_path: data/train/tokenized/tokenized_base
+hf_dataset_names: math_dataset/arithmetic__mul
+  # roneneldan/TinyStories,
+
+tokenized_train_path: data/train/tokenized/tokenized_base
+tokenized_eval_path: data/test/tokenized/tokenized_base
 batched_tokenized_path: data/train/tokenized/tokenized_batched
 dataset_tag: ""
 strict_dataset_compat: false
