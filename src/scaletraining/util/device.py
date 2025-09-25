@@ -19,20 +19,15 @@ def clear_cuda_cache() -> None:
 def configure_rocm_and_sdp(cfg: Any) -> None:
     """Apply ROCm allocator tweaks and scaled-dot-product attention toggles."""
 
+    # Improve memory utility and segmentation
     os.environ.setdefault("PYTORCH_HIP_ALLOC_CONF", "expandable_segments:True")
-    if hasattr(cfg, "use_flash_sdp"):
-        torch.backends.cuda.enable_flash_sdp(bool(cfg.use_flash_sdp))
-    if hasattr(cfg, "use_mem_efficient_sdp"):
-        torch.backends.cuda.enable_mem_efficient_sdp(bool(cfg.use_mem_efficient_sdp))
-    if hasattr(cfg, "use_math_sdp"):
-        torch.backends.cuda.enable_math_sdp(bool(cfg.use_math_sdp))
+    try:
+        torch.backends.cuda.enable_flash_sdp(bool(cfg.use_flash_sdp)) # Often true
+        torch.backends.cuda.enable_mem_efficient_sdp(bool(cfg.use_mem_efficient_sdp)) # Often true
+        torch.backends.cuda.enable_math_sdp(bool(cfg.use_math_sdp)) # Often false
+    except Exception as e:
+        print(f"RoCM settings not configured: {e}")
 
 
-def resolve_device(cfg: Any) -> None:
-    """Resolve `cfg.device` when set to 'auto'."""
 
-    if getattr(cfg, "device", None) == "auto":
-        cfg.device = "cuda" if torch.cuda.is_available() else "cpu"
-
-
-__all__ = ["clear_cuda_cache", "configure_rocm_and_sdp", "resolve_device"]
+__all__ = ["clear_cuda_cache", "configure_rocm_and_sdp"]

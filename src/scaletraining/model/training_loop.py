@@ -61,7 +61,8 @@ def training_run(
     primary_base_lr = (float(opt_primary.param_groups[0]["lr"]) if opt_primary is not None else 0.0)
     secondary_base_lr = (float(opt_secondary.param_groups[0]["lr"]) if opt_secondary is not None else 0.0)
 
-    model.to(cfg.device)
+    device = cfg.device.device if torch.cuda.is_available() else "cpu"
+    model.to(device)
     model.train()
 
     if torch.cuda.is_available():

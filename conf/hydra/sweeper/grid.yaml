@@ -4,7 +4,9 @@ hydra:
     _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
     max_batch_size: null
     params:
-      model.lr: 0.1, 0.07, 0.03, 0.025, 0.01, 0.005
+      logits_chunk_size: 1,32,64,128,256,512,1024,0
+      wandb_project_name: logits_sweep_tinystories
+      
   sweep:
     subdir: ${sweep.name}/${now:%Y-%m-%d_%H-%M-%S}/${hydra.job.num}
 

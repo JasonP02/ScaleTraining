@@ -32,12 +32,8 @@ def check_tokenizer_metadata_match(cfg, dataset_root, tok_dir, pk_dir):
             except Exception:
                 pass
 
-def is_tokenized(tokenized_path):
-    return os.path.isdir(tokenized_path)
-
-def is_packed(packed_path):
-    return os.path.isdir(packed_path)
-
+def path_exists(path):
+    return os.path.isdir(path)
 
 def get_loader_kwargs(cfg):
     num_workers = int(getattr(cfg, "loader_num_workers", 0))
@@ -60,10 +56,10 @@ def build_loaders(cfg, for_training: bool = True):
     work directly from the tokenized split directories so evaluation code can
     reuse variable-length text without repacking.
     """
-    tok_dir = get_tokenized_directory(cfg, for_training)
+    tok_dir = get_tokenized_directory(cfg, for_training) # Uses fingerprint
     tokenized_train_dir = os.path.join(tok_dir, "train")
     # We dont want to tokenize for evals.
-    if not is_tokenized(tokenized_train_dir) and for_training:
+    if not path_exists(tokenized_train_dir) and for_training:
         tokenize_dataset(cfg)
         
     pk_dir = get_packed_directory(cfg, for_training)  # expected packed dataset location for this config

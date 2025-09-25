@@ -245,7 +245,7 @@ class MoELayer(nn.Module):
 
 
 class MoEBlock(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, transformer_cfg, moe_cfg):
         super().__init__()
         self.ln = nn.LayerNorm(cfg.n_embed)
         self.attention = AttentionBlock(cfg)
@@ -257,7 +257,7 @@ class MoEBlock(nn.Module):
         return x
     
 class TransformerNetwork(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, model_cfg):
         super().__init__()
         # We need to create: embedding matrix, stacked transformer block, out logits
         self.token_embedding = nn.Embedding(cfg.vocab_size, cfg.n_embed)

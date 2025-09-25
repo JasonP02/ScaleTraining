@@ -1,0 +1,4 @@
+device: cuda
+use_flash_sdp: true
+use_mem_efficient_sdp: true
+use_math_sdp: false

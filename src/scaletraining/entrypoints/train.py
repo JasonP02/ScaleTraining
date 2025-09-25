@@ -22,13 +22,8 @@ from scaletraining.model import TransformerNetwork
 from scaletraining.util import (
     clear_cuda_cache,
     configure_rocm_and_sdp,
-    flatten_cfg,
     init_wandb,
-    get_packed_directory,
-    read_metadata,
-    resolve_device,
     save_model,
-    get_tokenized_directory,
 )
 from scaletraining.model.training_loop import training_run
 from scaletraining.util.generation_utils import generate_autoregressive
@@ -37,102 +32,43 @@ from scaletraining.util.model_stats import (
     humanize_bytes,
     humanize_params,
 )
-from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
-try:
-    from tokenizers import Tokenizer as _RawTokenizer
-except ModuleNotFoundError:  # pragma: no cover - optional dependency during partial installs
-    _RawTokenizer = None
+from tokenizers import Tokenizer as _RawTokenizer
+from scaletraining.data_processing.tokenizer import Tokenizer
 
 
 LOGGER = logging.getLogger(__name__)
 
 
-def _resolve_vocab_size(flat: Any, meta: Optional[Dict[str, Any]]) -> None:
-    """Populate `flat.vocab_size` from metadata, tokenizer config, or tokenizer files."""
-
-    if getattr(flat, "vocab_size", None):
-        return
-
-    size = None
-    if meta:
-        size = meta.get("tokenizer_vocab_size") or meta.get("vocab_size")
-
-    if not size:
-        # Try dataset-specific tokenizer file, if it exists.
-        try:
-            dataset_specs = flat.hf_dataset_names
-            local_path = get_tokenizer_name_from_dataset(dataset_specs, getattr(flat, "tokenizer_vocab_size", None))
-            path_obj = Path(local_path)
-            if path_obj.exists() and _RawTokenizer is not None:
-                size = _RawTokenizer.from_file(str(path_obj)).get_vocab_size()
-        except Exception:
-            size = None
-
-    if not size:
-        # Fall back to the configured tokenizer (likely a HF model).
-        try:
-            tok = AutoTokenizer.from_pretrained(flat.tokenizer_name, use_fast=True)
-            size = tok.vocab_size
-        except Exception:
-            size = None
-
-    if not size:
-        size = getattr(flat, "tokenizer_vocab_size", None)
-
-    if not size:
-        raise RuntimeError("Unable to determine tokenizer vocab size; set model.vocab_size or tokenizer_vocab_size")
-
-    flat.vocab_size = int(size)
-
+class DatasetSpec:
+    def __init__(self):
+        self.train_dataset_paths: list[str] = self.get_training_data_paths
+        self.tokenizer = Tokenizer()
+    
+    def get_training_data_paths(self):
+        pass
 
 @hydra.main(version_base=None, config_path=str(Path(__file__).parent.parent.parent.parent / "conf"), config_name="config")
 def main(cfg: DictConfig) -> float:
     """
     Train the model using Hydra config and log to W&B.
     """
-    # Keep both the Hydra config (for metadata) and a flattened namespace for modules that expect attrs.
-    flat = flatten_cfg(cfg)
-    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
-    sweep_name = "solo"
-    if isinstance(cfg_dict, dict):
-        sweep_section = cfg_dict.get("sweep")
-        if isinstance(sweep_section, dict):
-            sweep_name = str(sweep_section.get("name") or sweep_name)
 
     # Resolve device, configure kernels, and free any stale CUDA cache
-    resolve_device(flat)
-    configure_rocm_and_sdp(flat)
+    configure_rocm_and_sdp(cfg.device)
     clear_cuda_cache()
 
-    init_wandb(flat, cfg_dict)
+    tokenizer = Tokenizer(cfg.tokenizer)
 
-    train_loader, val_loader = build_loaders(flat, for_training=True)
+    init_wandb(cfg, tok=tokenizer.tok, tokenizer_vocab_size=tokenizer.vocab_size)
 
-    # Update W&B run name based on the dataset-specific tokenizer actually used
-    meta = None
-    try:
-        import wandb
-        tok_dir = get_tokenized_directory(flat)
-        pk_dir = get_packed_directory(flat)
-        meta = read_metadata(pk_dir) or read_metadata(tok_dir)
-        tok_path = (meta or {}).get("tokenizer_name")
-        if tok_path:
-            from pathlib import Path as _P
-            base = _P(tok_path).stem
-            if wandb.run is not None:
-                wandb.run.name = f"{sweep_name}_{base}"
-    except Exception as _e:
-        # Non-fatal: keep existing W&B name if metadata is unavailable
-        pass
+    train_loader, val_loader = build_loaders(cfg, for_training=True)
 
-    # Ensure model vocab matches the tokenizer used for this run.
-    _resolve_vocab_size(flat, meta)
 
     # Dataset artifact logging intentionally disabled.
 
     # Model + loss
-    model = TransformerNetwork(flat)
+    model = TransformerNetwork(cfg)
 
     total_params, trainable_params = count_parameters(model)
     readable_total = humanize_params(total_params)

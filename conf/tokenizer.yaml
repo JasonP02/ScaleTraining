@@ -1,13 +1,19 @@
 # Tokenization, dataset selection, and packing knobs.
 
-hf_dataset_names: refined-web-mix
-dataset_tag: ""
+# Only huggingface support
+# Ensure that the name and tag are pairwise matched, otherwise there will be issues.
+# If there is no tag, leave "null"
+dataset_names:
+  - roneneldan/TinyStories 
+dataset_tag:
+  - null
+
 strict_dataset_compat: false
 hf_token: ${oc.env:HUGGING_FACE_HUB_TOKEN, ""}
 
 # Tokenization behavior
-tokenizer_name: bigcode/starcoder2-tokenizer
-tokenizer_type: hf
+pretrained_tokenizer_name: bigcode/starcoder2-tokenizer
+is_pretrained: True
 num_proc: 8
 
 # Packing behavior
@@ -17,4 +23,4 @@ pack_map_batch_size: 400
 pack_writer_batch_size: 4000
 
 # Dataset-specific tokenizer training
-tokenizer_vocab_size: 12800
+custom_tokenizer_vocab_size: 12800

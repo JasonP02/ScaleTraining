@@ -1,15 +1,11 @@
 ## Training runtime and token budget knobs
 
-device: cuda
 batch_size: 24
 accum_steps: 3
 grad_clip_norm: 1.0
-max_train_tokens: 40000000
+max_train_tokens: 10000000
 max_val_tokens: 1000000000
 logits_chunk_size: 256
-use_flash_sdp: true
-use_mem_efficient_sdp: true
-use_math_sdp: false
 
 # Early stopping
 early_stop_tokens_without_improvement: 2000000
