@@ -5,6 +5,7 @@ from tokenizers.pre_tokenizers import Whitespace
 from omegaconf import DictConfig
 import hydra
 from pathlib import Path
+from scaletraining.config import load_project_config
 from scaletraining.data_processing.dataset_utils import dataset_safe_name, get_dataset_text_files
 
 def train_tokenizer_from_cfg(cfg: DictConfig) -> str:
@@ -46,6 +47,7 @@ def train_tokenizer_from_cfg(cfg: DictConfig) -> str:
 @hydra.main(version_base=None, config_path='../../../conf', config_name='config')
 def main(cfg: DictConfig) -> None:
     """Hydra console script entrypoint for tokenization."""
+    cfg = load_project_config(cfg)
     train_tokenizer_from_cfg(cfg)
 
 if __name__ == "__main__":

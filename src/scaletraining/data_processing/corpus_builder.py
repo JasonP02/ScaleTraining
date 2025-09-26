@@ -16,8 +16,13 @@ from datasets import IterableDataset, load_dataset
 from transformers import AutoTokenizer
 
 from scaletraining.data_processing.batch_packer import pack_and_save
-from scaletraining.data_processing.tokenization import get_tokenizer
-from scaletraining.util import _cfg_subset, get_packed_directory, read_metadata, get_tokenized_directory, write_metadata
+from scaletraining.util import (
+    get_cfg_subset,
+    get_packed_directory,
+    get_tokenized_directory,
+    read_metadata,
+    write_metadata,
+)
 
 
 TOKENS_PER_GB = 250_000_000
@@ -207,17 +212,26 @@ def stream_source(
     }
 
 
-def tokenize_and_pack(raw_dir: Path, flat_cfg, tokenizer_name: str, max_seq_len: int, num_proc: int) -> tuple[str, str]:
+def _load_tokenizer(tokenizer_name: str):
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
+    if tokenizer.eos_token_id is None:
+        tokenizer.add_special_tokens({"eos_token": ""})
+    if tokenizer.pad_token_id is None and tokenizer.eos_token is not None:
+        tokenizer.pad_token = tokenizer.eos_token
+    return tokenizer, int(tokenizer.eos_token_id)
+
+
+def tokenize_and_pack(raw_dir: Path, cfg, tokenizer_name: str, max_seq_len: int, num_proc: int) -> tuple[str, str]:
     data_files = {"train": str(raw_dir / "train.jsonl")}
     val_path = raw_dir / "val.jsonl"
     if val_path.exists() and val_path.stat().st_size > 0:
         data_files["validation"] = str(val_path)
 
     dataset = load_dataset("json", data_files=data_files)
-    tokenizer, eos_id = get_tokenizer(tokenizer_name)
+    tokenizer, eos_id = _load_tokenizer(tokenizer_name)
 
-    tok_dir = Path(get_tokenized_directory(flat_cfg, for_training=True))
-    pk_dir = Path(get_packed_directory(flat_cfg))
+    tok_dir = Path(get_tokenized_directory(cfg, for_training=True))
+    pk_dir = Path(get_packed_directory(cfg))
     tok_dir.mkdir(parents=True, exist_ok=True)
     pk_dir.mkdir(parents=True, exist_ok=True)
 
@@ -249,23 +263,23 @@ def tokenize_and_pack(raw_dir: Path, flat_cfg, tokenizer_name: str, max_seq_len:
             desc="Tokenizing val",
         ).save_to_disk(str(tok_dir / "val"))
 
-    write_metadata(str(tok_dir), {"config": _cfg_subset(flat_cfg), "tokenizer_name": tokenizer_name})
+    write_metadata(str(tok_dir), {"config": get_cfg_subset(cfg), "tokenizer_name": tokenizer_name})
 
     pack_and_save(
         tokenized_path=str(tok_dir),
         packed_path=str(pk_dir),
-        block_size=int(flat_cfg.max_seq_len),
-        num_proc=int(flat_cfg.pack_num_proc),
-        map_batch_size=int(flat_cfg.pack_map_batch_size),
-        writer_batch_size=int(flat_cfg.pack_writer_batch_size),
-        metadata={"config": _cfg_subset(flat_cfg), "tokenizer_name": tokenizer_name},
+        block_size=int(cfg.model.max_seq_len),
+        num_proc=int(cfg.tokenizer.pack_num_proc),
+        map_batch_size=int(cfg.tokenizer.pack_map_batch_size),
+        writer_batch_size=int(cfg.tokenizer.pack_writer_batch_size),
+        metadata={"config": get_cfg_subset(cfg), "tokenizer_name": tokenizer_name},
     )
 
     return str(tok_dir), str(pk_dir)
 
 
 def build_mixed_corpus(
-    flat_cfg,
+    cfg,
     dataset_id: str,
     tokenizer_name: str,
     max_seq_len: int,
@@ -314,7 +328,7 @@ def build_mixed_corpus(
 
     tok_dir, pk_dir = tokenize_and_pack(
         raw_dir=raw_dir,
-        flat_cfg=flat_cfg,
+        cfg=cfg,
         tokenizer_name=tokenizer_name,
         max_seq_len=max_seq_len,
         num_proc=num_proc,
@@ -323,7 +337,7 @@ def build_mixed_corpus(
     meta = read_metadata(pk_dir) or {}
     meta.update(
         {
-            "config": _cfg_subset(flat_cfg),
+            "config": get_cfg_subset(cfg),
             "sources": summaries,
             "tokenizer_name": tokenizer_name,
             "max_seq_len": max_seq_len,

@@ -7,10 +7,14 @@ from .artifacts import (
     save_run_manifest,
     write_metadata,
 )
-from .config import _cfg_subset, config_fingerprint, flatten_cfg
 from .device import clear_cuda_cache, configure_rocm_and_sdp, resolve_device
 from .model_stats import count_parameters, humanize_bytes, humanize_params
-from .path_utils import get_packed_directory, get_tokenized_directory
+from .path_utils import (
+    get_cfg_subset,
+    get_packed_directory,
+    get_tokenized_directory,
+    config_fingerprint,
+)
 from .wandb_utils import init_wandb, log_eval_metrics, log_train_metrics
 
 __all__ = [
@@ -20,9 +24,8 @@ __all__ = [
     "init_wandb",
     "log_train_metrics",
     "log_eval_metrics",
-    "flatten_cfg",
     "config_fingerprint",
-    "_cfg_subset",
+    "get_cfg_subset",
     "get_tokenized_directory",
     "get_packed_directory",
     "write_metadata",

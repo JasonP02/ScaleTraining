@@ -15,9 +15,9 @@ import torch.nn as nn
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
-import torch.nn.functional as F
 
-from scaletraining.util import flatten_cfg, resolve_device
+from scaletraining.config import load_project_config
+from scaletraining.util import resolve_device
 from scaletraining.util.eval_utils import evaluate_perplexity
 from scaletraining.data_processing import build_loaders, get_loader_kwargs
 from scaletraining.util.eval_utils import load_pretrained_model_and_tokenizer
@@ -31,10 +31,10 @@ def eval_on_gsm8k(cfg, model, tok):
     dataset = load_dataset('openai/gsm8k', 'main')
     tokenized_dataset = dataset.map(lambda ex: tokenize_fn(tok, ex, "question"), batched=True)
 
-    loader_kwargs = get_loader_kwargs(cfg)
+    loader_kwargs = get_loader_kwargs(cfg.training)
     print(loader_kwargs)
 
-    batch_size = int(getattr(cfg, "eval_batch_size", 1))
+    batch_size = int(getattr(cfg.training, "eval_batch_size", 1))
 
     dataloader = DataLoader(
         tokenized_dataset,
@@ -148,12 +148,11 @@ def eval_on_arc(cfg, model, tok):
 
 @hydra.main(version_base=None, config_path=str(Path(__file__).parent.parent.parent.parent / "conf"), config_name="config")
 def main(cfg: DictConfig) -> None:
-    flat = flatten_cfg(cfg)
-    resolve_device(flat)
-
-    model, tok = load_pretrained_model_and_tokenizer(flat)
-    eval_on_arc(flat, model, tok)
-    # eval_on_gsm8k(flat, model, tok)
+    cfg = load_project_config(cfg)
+    resolve_device(cfg)
+    model, tok = load_pretrained_model_and_tokenizer(cfg)
+    eval_on_arc(cfg, model, tok)
+    # eval_on_gsm8k(cfg, model, tok)
 
 
 if __name__ == "__main__":

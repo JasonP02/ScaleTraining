@@ -13,14 +13,22 @@ if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 from hydra import compose, initialize
+from omegaconf import open_dict
 
+from scaletraining.config import load_project_config
 from scaletraining.data_processing.corpus_builder import build_mixed_corpus
-from scaletraining.util import flatten_cfg
+
+
+def _first_non_empty(values):
+    for value in values:
+        if value not in (None, "", "null"):
+            return value
+    return None
 
 
 def build_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser("Assemble and cache a mixed pretraining corpus.")
-    parser.add_argument("--dataset-id", help="Identifier to store under hf_dataset_names (defaults to config).")
+    parser.add_argument("--dataset-id", help="Identifier to override tokenizer.dataset_names (defaults to config).")
     parser.add_argument("--tokenizer", help="Tokenizer name/path (defaults to config tokenizer_name).")
     parser.add_argument("--max-seq-len", type=int, help="Packing sequence length (defaults to config max_seq_len).")
     parser.add_argument("--output-root", type=Path, default=Path("data/pretrain/mixed"))
@@ -41,41 +49,44 @@ def main() -> None:
     os.chdir(PROJECT_ROOT)
     with initialize(config_path="../conf", version_base=None):
         cfg = compose(config_name="config")
-
-    flat = flatten_cfg(cfg)
+    cfg = load_project_config(cfg)
 
     if args.hf_token:
         os.environ["HUGGING_FACE_HUB_TOKEN"] = args.hf_token
 
     dataset_id = args.dataset_id
-    cfg_dataset = getattr(flat, "hf_dataset_names", None)
+    cfg_dataset = list(cfg.tokenizer.dataset_names)
     if dataset_id is None:
-        if isinstance(cfg_dataset, list):
-            if len(cfg_dataset) == 1:
-                dataset_id = cfg_dataset[0]
-            else:
-                parser.error("Config hf_dataset_names is a list; supply --dataset-id.")
+        if len(cfg_dataset) == 1:
+            dataset_id = cfg_dataset[0]
         else:
-            dataset_id = cfg_dataset
+            parser.error("Config tokenizer.dataset_names is a list; supply --dataset-id.")
     if not dataset_id:
         parser.error("Unable to infer dataset id; pass --dataset-id.")
 
-    tokenizer_name = args.tokenizer or getattr(flat, "tokenizer_name", None)
+    tokenizer_name = (
+        args.tokenizer
+        or cfg.tokenizer.tokenizer_name
+        or cfg.tokenizer.pretrained_tokenizer_name
+    )
     if not tokenizer_name:
         parser.error("Tokenizer not provided and config has no tokenizer_name.")
 
-    max_seq_len = args.max_seq_len or getattr(flat, "max_seq_len", None)
+    max_seq_len = args.max_seq_len or cfg.model.max_seq_len
     if not max_seq_len:
         parser.error("Max seq len missing; supply --max-seq-len or set in config.")
     max_seq_len = int(max_seq_len)
 
-    flat.hf_dataset_names = dataset_id
-    flat.dataset_tag = args.dataset_tag or getattr(flat, "dataset_tag", "") or dataset_id
-    flat.tokenizer_name = tokenizer_name
-    flat.max_seq_len = max_seq_len
+    with open_dict(cfg.tokenizer):
+        cfg.tokenizer.dataset_names = [dataset_id]
+        tag_override = args.dataset_tag or _first_non_empty(cfg.tokenizer.dataset_tag) or dataset_id
+        cfg.tokenizer.dataset_tag = [tag_override]
+        cfg.tokenizer.tokenizer_name = tokenizer_name
+    with open_dict(cfg.model):
+        cfg.model.max_seq_len = max_seq_len
 
     tok_dir, pk_dir, summaries = build_mixed_corpus(
-        flat_cfg=flat,
+        cfg=cfg,
         dataset_id=dataset_id,
         tokenizer_name=tokenizer_name,
         max_seq_len=max_seq_len,
@@ -93,7 +104,7 @@ def main() -> None:
     print("\nDone!")
     print(f"Tokenized shards: {tok_dir}")
     print(f"Packed shards:    {pk_dir}")
-    print(f"Use hf_dataset_names: {dataset_id}")
+    print(f"Use tokenizer.dataset_names: {dataset_id}")
 
 
 if __name__ == "__main__":

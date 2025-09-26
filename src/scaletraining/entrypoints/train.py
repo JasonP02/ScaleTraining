@@ -9,44 +9,33 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
 
 import hydra
-from omegaconf import DictConfig, OmegaConf
-import torch.nn as nn
+from omegaconf import DictConfig, open_dict
 import torch
+import torch.nn as nn
 
 from scaletraining.data_processing import build_loaders
-from scaletraining.data_processing.tokenization import get_tokenizer_name_from_dataset
 from scaletraining.model import TransformerNetwork
 from scaletraining.util import (
     clear_cuda_cache,
     configure_rocm_and_sdp,
     init_wandb,
+    resolve_device,
     save_model,
 )
 from scaletraining.model.training_loop import training_run
-from scaletraining.util.generation_utils import generate_autoregressive
 from scaletraining.util.model_stats import (
     count_parameters,
     humanize_bytes,
     humanize_params,
 )
 
-from tokenizers import Tokenizer as _RawTokenizer
-from scaletraining.data_processing.tokenizer import Tokenizer
+from scaletraining.data_processing.tokenizer import TextTokenizer
+from scaletraining.config import load_project_config
 
 
 LOGGER = logging.getLogger(__name__)
-
-
-class DatasetSpec:
-    def __init__(self):
-        self.train_dataset_paths: list[str] = self.get_training_data_paths
-        self.tokenizer = Tokenizer()
-    
-    def get_training_data_paths(self):
-        pass
 
 @hydra.main(version_base=None, config_path=str(Path(__file__).parent.parent.parent.parent / "conf"), config_name="config")
 def main(cfg: DictConfig) -> float:
@@ -54,11 +43,24 @@ def main(cfg: DictConfig) -> float:
     Train the model using Hydra config and log to W&B.
     """
 
+    cfg = load_project_config(cfg)
+
     # Resolve device, configure kernels, and free any stale CUDA cache
     configure_rocm_and_sdp(cfg.device)
+    resolve_device(cfg)
     clear_cuda_cache()
 
-    tokenizer = Tokenizer(cfg.tokenizer)
+    tokenizer = TextTokenizer(cfg)
+    try:
+        with open_dict(cfg.model):
+            cfg.model.vocab_size = tokenizer.vocab_size
+    except Exception:
+        pass
+    try:
+        with open_dict(cfg.tokenizer):
+            cfg.tokenizer.tokenizer_name = tokenizer.tok_name
+    except Exception:
+        pass
 
     init_wandb(cfg, tok=tokenizer.tok, tokenizer_vocab_size=tokenizer.vocab_size)
 
@@ -109,30 +111,30 @@ def main(cfg: DictConfig) -> float:
     loss_fn = nn.CrossEntropyLoss(reduction='sum')  # summed CE, normalized per token in loop
 
     # Sanity check embedding size vs vocab size after metadata auto-set
-    assert model.token_embedding.num_embeddings == flat.vocab_size, (
-        f"Model vocab ({model.token_embedding.num_embeddings}) != cfg.vocab_size ({flat.vocab_size})"
+    assert model.token_embedding.num_embeddings == cfg.model.vocab_size, (
+        f"Model vocab ({model.token_embedding.num_embeddings}) != cfg.model.vocab_size ({cfg.model.vocab_size})"
     )
 
     # Training loop
-    stats = training_run(flat, model, train_loader, loss_fn=loss_fn, val_loader=val_loader)
+    stats = training_run(cfg, model, train_loader, loss_fn=loss_fn, val_loader=val_loader)
 
     # Save model locally only
-    run_dir = save_model(model, flat, flat.output_dir)
+    run_dir = save_model(model, cfg, cfg.paths.output_dir)
     print(f"Model saved locally to: {run_dir}")
 
 
     # Persist a lightweight result.json in the job directory for easy aggregation
     job_result = {
         "final_train_loss": float(stats['train_loss'][-1]) if stats.get('train_loss') else None,
-        "primary_optimizer": flat.primary_optimizer,
-        "use_rope": bool(flat.use_rope),
-        "lr": float(flat.lr),
-        "batch_size": int(flat.batch_size),
-        "accum_steps": int(flat.accum_steps),
-        "max_seq_len": int(flat.max_seq_len),
-        "n_layer": int(flat.n_layer),
-        "n_head": int(flat.n_head),
-        "n_embed": int(flat.n_embed),
+        "primary_optimizer": cfg.optimizer.primary_optimizer,
+        "use_rope": bool(cfg.model.use_rope),
+        "lr": float(cfg.optimizer.lr),
+        "batch_size": int(cfg.training.batch_size),
+        "accum_steps": int(cfg.training.accum_steps),
+        "max_seq_len": int(cfg.model.max_seq_len),
+        "n_layer": int(cfg.model.n_layer),
+        "n_head": int(cfg.model.n_head),
+        "n_embed": int(cfg.model.n_embed),
     }
     with open(Path.cwd() / "result.json", "w", encoding="utf-8") as f:
         json.dump(job_result, f, indent=2, sort_keys=True)

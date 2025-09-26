@@ -8,23 +8,27 @@ from torch.utils.checkpoint import checkpoint as ckpt
 
 
 class AttentionBlock(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, model_cfg):
         super().__init__()
-        assert cfg.n_embed % cfg.n_head == 0 # Ensure that embedding can be evenly split between heads
-        self.kqv_block = nn.Linear(cfg.n_embed, cfg.n_embed * 3, bias=cfg.bias) # 3E, E
-        self.out_projection = nn.Linear(cfg.n_embed, cfg.n_embed, bias=cfg.bias) # E, E
+        assert model_cfg.n_embed % model_cfg.n_head == 0  # Ensure that embedding can be evenly split between heads
+        self.kqv_block = nn.Linear(model_cfg.n_embed, model_cfg.n_embed * 3, bias=model_cfg.bias)
+        self.out_projection = nn.Linear(model_cfg.n_embed, model_cfg.n_embed, bias=model_cfg.bias)
 
-        self.n_head = cfg.n_head
-        self.n_embed = cfg.n_embed
-        self.resid_dropout = nn.Dropout(cfg.resid_dropout)
-        self.attn_dropout = cfg.attn_dropout
+        self.n_head = model_cfg.n_head
+        self.n_embed = model_cfg.n_embed
+        self.resid_dropout = nn.Dropout(model_cfg.resid_dropout)
+        self.attn_dropout = model_cfg.attn_dropout
 
-        self.head_dim = cfg.n_embed // cfg.n_head
-        self.max_seq_len = cfg.max_seq_len
+        self.head_dim = model_cfg.n_embed // model_cfg.n_head
+        self.max_seq_len = model_cfg.max_seq_len
 
         # RoPE configuration (on/off)
-        self.use_rope = bool(getattr(cfg, 'use_rope', True))
-        self.theta = cfg.rope_config.get('theta', 10000)
+        self.use_rope = bool(getattr(model_cfg, "use_rope", True))
+        rope_cfg = getattr(model_cfg, "rope_config", {})
+        theta = getattr(rope_cfg, "theta", None)
+        if theta is None and isinstance(rope_cfg, dict):
+            theta = rope_cfg.get("theta", 10000.0)
+        self.theta = float(theta if theta is not None else 10000.0)
 
         if self.use_rope:
             assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE, but got %d" % self.head_dim
@@ -110,12 +114,12 @@ def _mlp_activation(name: str):
 
 
 class MLPBlock(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, model_cfg):
         super().__init__()
-        self.Wh = nn.Linear(cfg.n_embed, cfg.n_hidden, bias=cfg.bias)
-        self.We = nn.Linear(cfg.n_hidden, cfg.n_embed, bias=cfg.bias)
-        self.dropout = nn.Dropout(cfg.resid_dropout)
-        self.activation = _mlp_activation(getattr(cfg, "activation", "relu"))
+        self.Wh = nn.Linear(model_cfg.n_embed, model_cfg.n_hidden, bias=model_cfg.bias)
+        self.We = nn.Linear(model_cfg.n_hidden, model_cfg.n_embed, bias=model_cfg.bias)
+        self.dropout = nn.Dropout(model_cfg.resid_dropout)
+        self.activation = _mlp_activation(getattr(model_cfg, "activation", "relu"))
 
     def forward(self,x):
         residual = x
@@ -127,11 +131,11 @@ class MLPBlock(nn.Module):
         return x + residual
     
 class TransformerBlock(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, model_cfg):
         super().__init__()
-        self.ln = nn.LayerNorm(cfg.n_embed)
-        self.attention = AttentionBlock(cfg)
-        self.mlp = MLPBlock(cfg)
+        self.ln = nn.LayerNorm(model_cfg.n_embed)
+        self.attention = AttentionBlock(model_cfg)
+        self.mlp = MLPBlock(model_cfg)
     
     def forward(self, x):
         x = x + self.attention(self.ln(x))
@@ -156,25 +160,36 @@ class ExpertFFN(nn.Module):
 
 
 class MoELayer(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, model_cfg, moe_cfg):
         super().__init__()
-        self.n_experts  = cfg.moe_n_experts
-        self.top_k      = cfg.moe_top_k
+        self.n_experts = moe_cfg.moe_n_experts
+        self.top_k = moe_cfg.moe_top_k
         assert 1 <= self.top_k <= self.n_experts
 
         self._last_aux_loss = None
-        self.router_noise = float(cfg.moe_router_noise)
-        self.router_temp = float(cfg.moe_router_temp)
-        self.router     = nn.Linear(cfg.n_embed, self.n_experts, bias=False)
+        self.router_noise = float(moe_cfg.moe_router_noise)
+        self.router_temp = float(moe_cfg.moe_router_temp)
+        self.router = nn.Linear(model_cfg.n_embed, self.n_experts, bias=False)
 
         self.experts = nn.ModuleList([
-            ExpertFFN(cfg.n_embed, cfg.moe_n_hidden, act=cfg.moe_activation,
-                      bias=cfg.bias)
+            ExpertFFN(
+                model_cfg.n_embed,
+                moe_cfg.moe_n_hidden,
+                act=moe_cfg.moe_activation,
+                bias=model_cfg.bias,
+            )
             for _ in range(self.n_experts)
         ])
-        self.shared = (ExpertFFN(cfg.n_embed, cfg.moe_n_hidden, act=cfg.moe_activation,
-                                 bias=cfg.bias)
-                       if getattr(cfg, "moe_use_shared", False) else None)
+        self.shared = (
+            ExpertFFN(
+                model_cfg.n_embed,
+                moe_cfg.moe_n_hidden,
+                act=moe_cfg.moe_activation,
+                bias=model_cfg.bias,
+            )
+            if getattr(moe_cfg, "moe_use_shared", False)
+            else None
+        )
 
     def forward(self, x):
         B,T,D = x.shape
@@ -245,11 +260,11 @@ class MoELayer(nn.Module):
 
 
 class MoEBlock(nn.Module):
-    def __init__(self, transformer_cfg, moe_cfg):
+    def __init__(self, model_cfg, moe_cfg):
         super().__init__()
-        self.ln = nn.LayerNorm(cfg.n_embed)
-        self.attention = AttentionBlock(cfg)
-        self.moe = MoELayer(cfg)
+        self.ln = nn.LayerNorm(model_cfg.n_embed)
+        self.attention = AttentionBlock(model_cfg)
+        self.moe = MoELayer(model_cfg, moe_cfg)
     
     def forward(self, x):
         x = x + self.attention(self.ln(x))
@@ -257,20 +272,28 @@ class MoEBlock(nn.Module):
         return x
     
 class TransformerNetwork(nn.Module):
-    def __init__(self, model_cfg):
+    def __init__(self, cfg):
         super().__init__()
-        # We need to create: embedding matrix, stacked transformer block, out logits
-        self.token_embedding = nn.Embedding(cfg.vocab_size, cfg.n_embed)
-        self.W_ue = nn.Linear(cfg.n_embed, cfg.vocab_size, bias=cfg.UE_bias)
+
+        model_cfg = cfg.model
+        moe_cfg = cfg.moe
+
+        vocab_size = getattr(model_cfg, "vocab_size", None)
+        if vocab_size is None:
+            raise ValueError("model.vocab_size must be set before constructing TransformerNetwork")
+
+        self.token_embedding = nn.Embedding(vocab_size, model_cfg.n_embed)
+        self.W_ue = nn.Linear(model_cfg.n_embed, vocab_size, bias=model_cfg.UE_bias)
         self.W_ue.weight = self.token_embedding.weight
 
-        # TODO enable the usage of MoE blocks in designated layers
-        block_cls = MoEBlock if cfg.use_moe else TransformerBlock # For comparing MoE and transformer
-        self.transformer_blocks = nn.ModuleList([
-            block_cls(cfg) for _ in range(cfg.n_layer)
-        ])
-        self.ln = nn.LayerNorm(cfg.n_embed)
-        self.use_checkpoint = cfg.use_checkpoint
+        if moe_cfg.use_moe:
+            blocks = [MoEBlock(model_cfg, moe_cfg) for _ in range(model_cfg.n_layer)]
+        else:
+            blocks = [TransformerBlock(model_cfg) for _ in range(model_cfg.n_layer)]
+
+        self.transformer_blocks = nn.ModuleList(blocks)
+        self.ln = nn.LayerNorm(model_cfg.n_embed)
+        self.use_checkpoint = model_cfg.use_checkpoint
 
     def forward_hidden(self, x):
         """

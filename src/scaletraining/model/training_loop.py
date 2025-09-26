@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 from torch.amp import autocast
 from torch.utils.data import DataLoader
+from omegaconf import open_dict
 
 from scaletraining.util.eval_utils import evaluate_perplexity
 from scaletraining.util.training_utils import (
@@ -51,17 +52,19 @@ def training_run(
     """
 
     matrix_params, other_params = split_model_matrix_params(
-        model.named_parameters(), model=model, cfg=cfg
+        model.named_parameters(), model=model, model_cfg=cfg.model
     )
-    if cfg.log_implementation_details:
+    if cfg.logging.log_implementation_details:
         log_implementation(matrix_params, other_params)
         
-    opt_primary, opt_secondary = build_optimizers(cfg, matrix_params, other_params)
+    opt_primary, opt_secondary = build_optimizers(cfg.optimizer, matrix_params, other_params)
 
     primary_base_lr = (float(opt_primary.param_groups[0]["lr"]) if opt_primary is not None else 0.0)
     secondary_base_lr = (float(opt_secondary.param_groups[0]["lr"]) if opt_secondary is not None else 0.0)
 
-    device = cfg.device.device if torch.cuda.is_available() else "cpu"
+    device = str(getattr(cfg, "device_resolved", None) or cfg.device.device)
+    if device == "cuda" and not torch.cuda.is_available():
+        device = "cpu"
     model.to(device)
     model.train()
 
@@ -72,21 +75,21 @@ def training_run(
     used_tokens = 0
     best_train_loss = float('inf')
     tokens_at_best_loss = 0
-    early_stop_tokens = max(0, int(getattr(cfg, "early_stop_tokens_without_improvement", 0)))
-    early_stop_min_delta = float(getattr(cfg, "early_stop_min_delta", 0.0))
+    early_stop_tokens = max(0, int(getattr(cfg.training, "early_stop_tokens_without_improvement", 0)))
+    early_stop_min_delta = float(getattr(cfg.training, "early_stop_min_delta", 0.0))
     step_in_accum = 0
     accum_loss_sum = 0.0
     accum_token_count = 0
     last_eval_tokens = 0
 
     stop_training = False
-    while used_tokens < cfg.max_train_tokens and not stop_training:
+    while used_tokens < cfg.training.max_train_tokens and not stop_training:
         for idx, batch in enumerate(train_loader):
-            input_ids = batch["input_ids"].to(cfg.device)
+            input_ids = batch["input_ids"].to(device)
 
             ctx = (
                 autocast(device_type="cuda", dtype=torch.bfloat16)
-                if (cfg.device == "cuda" and torch.cuda.is_available())
+                if (device == "cuda" and torch.cuda.is_available())
                 else contextlib.nullcontext()
             )
             with ctx:
@@ -94,7 +97,7 @@ def training_run(
                 hidden = hidden[:, :-1, :]
                 targets, effective = prepare_targets(input_ids)
                 loss_sum = compute_loss_sum(
-                    model, hidden, targets, cfg.logits_chunk_size, loss_fn
+                    model, hidden, targets, cfg.training.logits_chunk_size, loss_fn
                 )
                 per_token_loss = loss_sum / max(1, effective)
 
@@ -103,9 +106,9 @@ def training_run(
                     if hasattr(model, "moe_aux_loss")
                     else hidden.new_tensor(0.0, dtype=torch.float32)
                 )
-                total_loss = per_token_loss + float(cfg.moe_lb_coef) * aux.to(per_token_loss.dtype)
+                total_loss = per_token_loss + float(cfg.moe.moe_lb_coef) * aux.to(per_token_loss.dtype)
 
-                loss = total_loss / cfg.accum_steps
+                loss = total_loss / cfg.training.accum_steps
 
             loss.backward()
             accum_loss_sum += float(loss_sum.item())
@@ -115,14 +118,16 @@ def training_run(
             used_tokens += int(effective)
 
 
-            if step_in_accum == cfg.accum_steps:
+            if step_in_accum == cfg.training.accum_steps:
                 import time
 
                 _t0 = time.time()
-                nn.utils.clip_grad_norm_(model.parameters(), max_norm=cfg.grad_clip_norm)
-                lr_scale = compute_lr_scale_tokens(used_tokens, cfg)
-                progress_t = compute_progress_t(used_tokens, cfg)
-                cfg.moe_lb_coef = apply_moe_schedules(model, cfg, progress_t)
+                nn.utils.clip_grad_norm_(model.parameters(), max_norm=cfg.training.grad_clip_norm)
+                lr_scale = compute_lr_scale_tokens(used_tokens, cfg.training, cfg.optimizer)
+                progress_t = compute_progress_t(used_tokens, cfg.training, cfg.optimizer)
+                new_lb_coef = apply_moe_schedules(model, cfg.moe, progress_t)
+                with open_dict(cfg.moe):
+                    cfg.moe.moe_lb_coef = new_lb_coef
 
                 scale_optimizer_lr(opt_primary, primary_base_lr, lr_scale)
                 scale_optimizer_lr(opt_secondary, secondary_base_lr, lr_scale)
@@ -143,15 +148,16 @@ def training_run(
                 tps = accum_token_count / elapsed if accum_token_count > 0 else 0.0
                 flops_used = estimate_flops(
                     tokens_used=used_tokens,
-                    d_model=cfg.n_embed,
-                    d_hidden=cfg.n_hidden,
-                    n_heads=cfg.n_head,
-                    seq_len=cfg.max_seq_len,
-                    n_layers=cfg.n_layer,
-                    n_moe_layers=cfg.moe_n_layers,
-                    top_k=cfg.moe_top_k,
-                    n_experts=cfg.moe_n_experts,
-                    using_moe=cfg.use_moe)
+                    d_model=cfg.model.n_embed,
+                    d_hidden=cfg.model.n_hidden,
+                    n_heads=cfg.model.n_head,
+                    seq_len=cfg.model.max_seq_len,
+                    n_layers=cfg.model.n_layer,
+                    n_moe_layers=cfg.moe.moe_n_layers,
+                    top_k=cfg.moe.moe_top_k,
+                    n_experts=cfg.moe.moe_n_experts,
+                    using_moe=cfg.moe.use_moe,
+                )
 
                 print(
                     f"Tokens: {used_tokens:,}, Loss: {avg_loss:.4f}, LR: {current_lr:.6g}, tok/s: {tps:.0f}"
@@ -179,8 +185,8 @@ def training_run(
                 if stop_training:
                     break
 
-                eval_interval = cfg.eval_interval_tokens
-                max_val_batches = cfg.eval_max_batches
+                eval_interval = cfg.training.eval_interval_tokens
+                max_val_batches = cfg.training.eval_max_batches
 
                 if (val_loader is not None
                     and eval_interval > 0
@@ -201,7 +207,7 @@ def training_run(
                     )
                     last_eval_tokens = used_tokens
 
-            if cfg.debug_memory and torch.cuda.is_available() and (idx % 100 == 0):
+            if cfg.logging.debug_memory and torch.cuda.is_available() and (idx % 100 == 0):
                 try:
                     peak_alloc = torch.cuda.max_memory_allocated() / (1024**2)
                     peak_reserv = torch.cuda.max_memory_reserved() / (1024**2)
@@ -211,7 +217,7 @@ def training_run(
                 except Exception:
                     pass
 
-            if used_tokens >= cfg.max_train_tokens:
+            if used_tokens >= cfg.training.max_train_tokens:
                 stop_training = True
                 break
 

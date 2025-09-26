@@ -2,9 +2,9 @@ from itertools import chain
 from datasets import load_from_disk
 import hydra
 from omegaconf import DictConfig
+from scaletraining.config import load_project_config
 from scaletraining.util.artifacts import write_metadata
-from scaletraining.util.config import _cfg_subset, flatten_cfg
-from scaletraining.util.path_utils import get_packed_directory, get_tokenized_directory
+from scaletraining.util.path_utils import get_cfg_subset, get_packed_directory, get_tokenized_directory
 
 def group_texts(examples, block_size: int):
     '''
@@ -77,15 +77,16 @@ def main(cfg: DictConfig) -> None:
 
     Uses tokenized_dir(cfg) as input and writes packed blocks to packed_dir(cfg).
     """
-    cfg = flatten_cfg(cfg)
+    cfg = load_project_config(cfg)
+
     tok_dir = get_tokenized_directory(cfg, for_training=True)
     pk_dir = get_packed_directory(cfg)
     pack_and_save(
         tokenized_path=tok_dir,
         packed_path=pk_dir,
-        block_size=int(cfg.max_seq_len),
-        num_proc=int(cfg.pack_num_proc),
-        map_batch_size=int(cfg.pack_map_batch_size),
-        writer_batch_size=int(cfg.pack_writer_batch_size),
-        metadata={"config": _cfg_subset(cfg)},
+        block_size=int(cfg.model.max_seq_len),
+        num_proc=int(cfg.tokenizer.pack_num_proc),
+        map_batch_size=int(cfg.tokenizer.pack_map_batch_size),
+        writer_batch_size=int(cfg.tokenizer.pack_writer_batch_size),
+        metadata={"config": get_cfg_subset(cfg)},
     )

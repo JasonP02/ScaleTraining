@@ -16,8 +16,8 @@ if str(SRC_ROOT) not in sys.path:
 
 from hydra import compose, initialize_config_dir
 
+from scaletraining.config import load_project_config
 from scaletraining.model import TransformerNetwork
-from scaletraining.util import flatten_cfg
 from scaletraining.util.model_stats import (
     count_parameters,
     humanize_bytes,
@@ -68,8 +68,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
 
     cfg = load_cfg(args.config_path, args.config_name, args.override)
-    flat = flatten_cfg(cfg)
-    model = TransformerNetwork(flat)
+    cfg = load_project_config(cfg)
+    model = TransformerNetwork(cfg)
 
     total_params, trainable_params = count_parameters(model)
     readable_total = humanize_params(total_params)

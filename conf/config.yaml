@@ -1,15 +1,15 @@
 defaults:
-  - _self_
-  - train
-  - model
-  - optimizer
-  - tokenizer
-  - logging
-  - generation
-  - paths
-  - moe
-  # generation config is optional; kept separate for tooling that composes it explicitly
+  - device: default
+  - training: default
+  - model: default
+  - optimizer: default
+  - tokenizer: default
+  - logging: default
+  - generation: default
+  - paths: default
+  - moe: default
   - override hydra/sweeper: grid
+  - _self_
 
 hydra:
   run:

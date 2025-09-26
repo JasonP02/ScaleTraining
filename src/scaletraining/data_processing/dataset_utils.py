@@ -18,21 +18,21 @@ def get_dataset_text_files(cfg: DictConfig) -> list[str]:
     """Get or create text files for the specified HF dataset(s).
     
     Args:
-        cfg: Hydra config with hf_dataset_names
+        cfg: Project config containing tokenizer and path settings.
         
     Returns:
         List of paths to text files for training
     """
     # Prefer configured path; fallback to project-local data/train/raw
-    data_dir = Path(getattr(cfg, "tokenizer_train_data", "data/train/raw"))
+    data_dir = Path(cfg.paths.tokenizer_train_data)
     if not data_dir.is_absolute():
         data_dir = Path.cwd() / data_dir
     data_dir.mkdir(parents=True, exist_ok=True)
     
     # Handle single dataset or list
     dataset_specs = normalize_dataset_specs(
-        names=cfg.tokenizer.hf_dataset_names,
-        configs=cfg.tokenizer.dataset_tag
+        names=cfg.tokenizer.dataset_names,
+        configs=cfg.tokenizer.dataset_tag,
     )
 
     text_files = []

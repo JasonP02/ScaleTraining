@@ -9,8 +9,7 @@ from typing import Any, Dict, Optional
 
 import torch
 
-from .config import _cfg_subset, config_fingerprint
-from .path_utils import _sanitize
+from .path_utils import _sanitize, config_fingerprint, get_cfg_subset
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -38,47 +37,53 @@ def read_metadata(path: str) -> Dict[str, Any]:
 def save_run_manifest(cfg: Any, out_dir: str, extra: Optional[Dict[str, Any]] = None) -> str:
     """Used for saving the model configuration"""
     os.makedirs(out_dir, exist_ok=True)
+    training_cfg = cfg.training
+    optimizer_cfg = cfg.optimizer
+    model_cfg = cfg.model
+    tokenizer_cfg = cfg.tokenizer
+    paths_cfg = cfg.paths
+
     manifest = {
         "time": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "dataset": _cfg_subset(cfg),
+        "dataset": get_cfg_subset(cfg),
         "optimizer": {
-            "primary": cfg.primary_optimizer,
-            "lr": cfg.lr,
-            "beta": cfg.beta,
-            "beta2": cfg.beta2,
-            "weight_decay": cfg.weight_decay,
-            "ns_iters": cfg.ns_iters,
-            "eps": cfg.eps,
+            "primary": optimizer_cfg.primary_optimizer,
+            "lr": optimizer_cfg.lr,
+            "beta": optimizer_cfg.beta,
+            "beta2": optimizer_cfg.beta2,
+            "weight_decay": optimizer_cfg.weight_decay,
+            "ns_iters": optimizer_cfg.ns_iters,
+            "eps": optimizer_cfg.eps,
         },
         "training": {
-            "batch_size": cfg.batch_size,
-            "accum_steps": cfg.accum_steps,
-            "effective_batch_size": cfg.batch_size * cfg.accum_steps,
-            "grad_clip_norm": cfg.grad_clip_norm,
-            "logits_chunk_size": cfg.logits_chunk_size,
-            "device": cfg.device,
+            "batch_size": training_cfg.batch_size,
+            "accum_steps": training_cfg.accum_steps,
+            "effective_batch_size": training_cfg.batch_size * training_cfg.accum_steps,
+            "grad_clip_norm": training_cfg.grad_clip_norm,
+            "logits_chunk_size": training_cfg.logits_chunk_size,
+            "device": cfg.device.device,
         },
         "transformer": {
-            "n_layer": cfg.n_layer,
-            "n_head": cfg.n_head,
-            "n_embed": cfg.n_embed,
-            "n_hidden": cfg.n_hidden,
-            "activation": getattr(cfg, "activation", "relu"),
-            "vocab_size": cfg.vocab_size,
-            "UE_bias": cfg.UE_bias,
-            "use_checkpoint": cfg.use_checkpoint,
+            "n_layer": model_cfg.n_layer,
+            "n_head": model_cfg.n_head,
+            "n_embed": model_cfg.n_embed,
+            "n_hidden": model_cfg.n_hidden,
+            "activation": getattr(model_cfg, "activation", "relu"),
+            "vocab_size": model_cfg.vocab_size,
+            "UE_bias": model_cfg.UE_bias,
+            "use_checkpoint": model_cfg.use_checkpoint,
         },
         "tokenizer": {
-            "tokenizer_name": cfg.tokenizer_name,
-            "tokenizer_type": cfg.tokenizer_type,
+            "tokenizer_name": tokenizer_cfg.tokenizer_name,
+            "tokenizer_type": tokenizer_cfg.tokenizer_type,
         },
-        "dataset_tag": cfg.dataset_tag,
+        "dataset_tag": _first_non_empty(tokenizer_cfg.dataset_tag),
         "fingerprint": config_fingerprint(cfg),
         "implementation": {
-            "optimizer": "baseline_adam" if cfg.use_baseline_adam else cfg.primary_optimizer,
+            "optimizer": "baseline_adam" if optimizer_cfg.use_baseline_adam else optimizer_cfg.primary_optimizer,
             "rope": {
-                "enabled": bool(getattr(cfg, "use_rope", True)),
-                "theta": cfg.rope_config.get("theta", 10000),
+                "enabled": bool(getattr(model_cfg, "use_rope", True)),
+                "theta": getattr(getattr(model_cfg, "rope_config", {}), "theta", 10000),
             },
         },
     }
@@ -90,8 +95,18 @@ def save_run_manifest(cfg: Any, out_dir: str, extra: Optional[Dict[str, Any]] = 
     return manifest_path
 
 
+def _first_non_empty(values):
+    for value in values:
+        if value not in (None, "", "null"):
+            return value
+    return None
+
+
 def save_model(model: torch.nn.Module, cfg: Any, out_root: Optional[str] = None) -> str:
-    out_root = out_root or cfg.output_dir
+    paths_cfg = cfg.paths
+    tokenizer_cfg = cfg.tokenizer
+
+    out_root = out_root or paths_cfg.output_dir
     if out_root and not os.path.isabs(out_root):
         # Prefer cwd resolution if already absolute, otherwise anchor to repo root
         cwd_candidate = Path.cwd() / out_root
@@ -99,7 +114,7 @@ def save_model(model: torch.nn.Module, cfg: Any, out_root: Optional[str] = None)
             out_root = str(cwd_candidate.resolve(strict=False))
         else:
             out_root = str((_REPO_ROOT / out_root).resolve(strict=False))
-    tag = _sanitize(cfg.dataset_tag)
+    tag = _sanitize(_first_non_empty(tokenizer_cfg.dataset_tag) or "")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     fingerprint = config_fingerprint(cfg)[:8]
     run_dir_name = "__".join(filter(None, [tag, f"v={fingerprint}", timestamp]))

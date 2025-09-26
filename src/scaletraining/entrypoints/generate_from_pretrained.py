@@ -12,49 +12,64 @@ from typing import Optional
 import hydra
 from omegaconf import DictConfig
 
-from scaletraining.util import flatten_cfg, resolve_device
-from scaletraining.util.generation_utils import generate_autoregressive
+from scaletraining.config import load_project_config
+from scaletraining.util.device import resolve_device
 from scaletraining.util.eval_utils import load_pretrained_model_and_tokenizer
+from scaletraining.util.generation_utils import generate_autoregressive
 
 
-def generate_text(cfg):
-    flat = flatten_cfg(cfg)
-    resolve_device(flat)
+def _coerce_top_k(value: Optional[object]) -> Optional[int]:
+    """Normalise top-k configuration into an optional positive integer."""
 
-    model, tok = load_pretrained_model_and_tokenizer(flat)
-    prompt: str = flat.prompt
-    max_new_tokens: int = int(flat.generation_max_tokens)
-    temperature: float = float(flat.generation_temperature)
-    top_k: Optional[int] = flat.generation_top_k
-    if isinstance(top_k, str):
-        top_k = int(top_k) if top_k.isdigit() else None
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, float):
+        return int(value) if value > 0 else None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        if stripped.isdigit():
+            parsed = int(stripped)
+            return parsed if parsed > 0 else None
+    return None
 
 
-    text = generate_autoregressive(
+def generate_text(cfg: DictConfig) -> str:
+    """Generate a text sample using the provided Hydra config."""
+
+    cfg = load_project_config(cfg)
+    model, tokenizer = load_pretrained_model_and_tokenizer(cfg)
+    device = resolve_device(cfg)
+
+    generation_cfg = cfg.generation
+
+    prompt: str = generation_cfg.prompt
+    max_new_tokens: int = int(generation_cfg.generation_max_tokens)
+    temperature: float = float(generation_cfg.generation_temperature)
+    top_k = _coerce_top_k(generation_cfg.generation_top_k)
+
+    return generate_autoregressive(
         model,
-        tok,
-        flat.device,
+        tokenizer,
+        device,
         prompt=prompt,
         max_new_tokens=max_new_tokens,
         temperature=temperature,
         top_k=top_k,
     )
-    return text
 
-@hydra.main(version_base=None, config_path=str(Path(__file__).parent.parent.parent.parent / "conf"), config_name="config")
+
+@hydra.main(
+    version_base=None,
+    config_path=str(Path(__file__).parent.parent.parent.parent / "conf"),
+    config_name="config",
+)
 def main(cfg: DictConfig) -> None:
-    """
-    Generate text from a saved model.
+    """Generate text from a saved model."""
 
-    Required Hydra overrides:
-      - model_path: str, filesystem path to a torch checkpoint saved by save_model().
-
-    Optional relevant config keys:
-      - prompt: str, seed text for generation (default: simple story prompt)
-      - generation_max_tokens: int, number of tokens to generate
-      - generation_temperature: float, softmax temperature (>0)
-      - generation_top_k: int, top-k filtering; set 0/None to disable
-    """
     text = generate_text(cfg)
     print("\n=== Generated Sample ===\n" + text + "\n=======================\n")
 

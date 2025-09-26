@@ -2,10 +2,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import torch
+from omegaconf import DictConfig, open_dict
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 from scaletraining.model.model import TransformerNetwork
 from scaletraining.util import find_latest_model_path
+from scaletraining.util.device import resolve_device
 
 
 import contextlib
@@ -35,21 +37,26 @@ def evaluate_perplexity(
 
     was_training = model.training
     model.eval()
+    device = resolve_device(cfg)
     total_loss = 0.0
     total_tokens = 0
     batches_seen = 0
     for batch in data_loader:
-        input_ids = batch["input_ids"].to(cfg.device)
+        input_ids = batch["input_ids"].to(device)
         context = (
             autocast(device_type="cuda", dtype=torch.bfloat16)
-            if (cfg.device == "cuda" and torch.cuda.is_available())
+            if (device == "cuda" and torch.cuda.is_available())
             else contextlib.nullcontext()
         )
         with context:
             hidden = model.forward_hidden(input_ids)[:, :-1, :]
             targets, effective = prepare_targets(input_ids)
             loss_sum = compute_loss_sum(
-                model, hidden, targets, getattr(cfg, "logits_chunk_size", 0), loss_fn
+                model,
+                hidden,
+                targets,
+                getattr(cfg.training, "logits_chunk_size", 0),
+                loss_fn,
             )
         total_loss += float(loss_sum.item())
         total_tokens += int(effective)
@@ -62,17 +69,24 @@ def evaluate_perplexity(
         model.train()
     return avg, ppl
 
-def load_pretrained_model_and_tokenizer(flat):
-    output_root_value = getattr(flat, "output_dir", "outputs")
+def _normalize_output_dir(cfg: DictConfig) -> Path:
+    output_root_value = cfg.paths.output_dir
     output_root = Path(output_root_value).expanduser()
     if not output_root.is_absolute():
         output_root = (_REPO_ROOT / output_root).expanduser()
-    flat.output_dir = str(output_root)
+    try:
+        with open_dict(cfg.paths):
+            cfg.paths.output_dir = str(output_root)
+    except Exception:
+        pass
+    return output_root
 
-    model_path_cfg = getattr(flat, "model_path", None)
+
+def _resolve_model_path(cfg: DictConfig, output_root: Path) -> Path:
+    model_path_cfg = cfg.generation.model_path
     if not model_path_cfg or str(model_path_cfg).lower() == "latest":
         # Auto-discover latest model under outputs
-        auto_path = find_latest_model_path(flat.output_dir)
+        auto_path = find_latest_model_path(str(output_root))
         if not auto_path:
             raise RuntimeError(
                 "No model_path provided and no latest model found under outputs/. Pass model_path=... or create outputs/<run>/model.pt."
@@ -84,29 +98,31 @@ def load_pretrained_model_and_tokenizer(flat):
         if not model_path.is_absolute():
             model_path = (_REPO_ROOT / model_path).expanduser()
 
-    flat.model_path = str(model_path)
+    try:
+        with open_dict(cfg.generation):
+            cfg.generation.model_path = str(model_path)
+    except Exception:
+        pass
+    return model_path
 
-    # Build model from config and load weights
-    model = TransformerNetwork(flat).to(flat.device)
-    model_path_obj = Path(model_path)
-    if not model_path_obj.exists():
-        raise FileNotFoundError(
-            f"Checkpoint not found at {model_path_obj}. Provide model_path=/absolute/path/to/model.pt or place checkpoints under {flat.output_dir}."
-        )
-    ckpt = torch.load(str(model_path_obj), map_location=flat.device)
-    state_dict = ckpt.get("state_dict", ckpt)
-    # Normalize keys from compiled/DataParallel checkpoints if present
-    def _strip_prefix(sd, prefix: str):
-        if any(k.startswith(prefix) for k in sd.keys()):
-            return {k[len(prefix):]: v for k, v in sd.items()}
-        return sd
-    state_dict = _strip_prefix(state_dict, "_orig_mod.")
-    state_dict = _strip_prefix(state_dict, "module.")
-    model.load_state_dict(state_dict)
-    model.eval()
+
+def load_pretrained_model_and_tokenizer(cfg: DictConfig):
+    device = resolve_device(cfg)
+    output_root = _normalize_output_dir(cfg)
+    model_path = _resolve_model_path(cfg, output_root)
 
     # Load tokenizer, supporting local JSON (dataset-specific) via PreTrainedTokenizerFast
-    tok_path = flat.tokenizer_name
+    tok_path = cfg.tokenizer.tokenizer_name or cfg.tokenizer.pretrained_tokenizer_name
+    if tok_path and not cfg.tokenizer.tokenizer_name:
+        try:
+            with open_dict(cfg.tokenizer):
+                cfg.tokenizer.tokenizer_name = tok_path
+        except Exception:
+            pass
+    if not tok_path:
+        raise ValueError(
+            "Config must define tokenizer_name or pretrained_tokenizer_name to load tokenizer."
+        )
     if isinstance(tok_path, str) and Path(tok_path).exists() and tok_path.endswith('.json'):
         tok = PreTrainedTokenizerFast(tokenizer_file=tok_path)
         if tok.eos_token_id is None:
@@ -119,5 +135,31 @@ def load_pretrained_model_and_tokenizer(flat):
             tok.add_special_tokens({"eos_token": ""})
         if tok.pad_token_id is None:
             tok.pad_token = tok.eos_token
+
+    if getattr(cfg.model, "vocab_size", None) is None:
+        try:
+            with open_dict(cfg.model):
+                cfg.model.vocab_size = len(tok)
+        except Exception:
+            pass
+
+    # Build model from config and load weights
+    model = TransformerNetwork(cfg).to(device)
+    model_path_obj = Path(model_path)
+    if not model_path_obj.exists():
+        raise FileNotFoundError(
+            f"Checkpoint not found at {model_path_obj}. Provide model_path=/absolute/path/to/model.pt or place checkpoints under {cfg.paths.output_dir}."
+        )
+    ckpt = torch.load(str(model_path_obj), map_location=device)
+    state_dict = ckpt.get("state_dict", ckpt)
+    # Normalize keys from compiled/DataParallel checkpoints if present
+    def _strip_prefix(sd, prefix: str):
+        if any(k.startswith(prefix) for k in sd.keys()):
+            return {k[len(prefix):]: v for k, v in sd.items()}
+        return sd
+    state_dict = _strip_prefix(state_dict, "_orig_mod.")
+    state_dict = _strip_prefix(state_dict, "module.")
+    model.load_state_dict(state_dict)
+    model.eval()
 
     return model, tok
